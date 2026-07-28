@@ -1,5 +1,6 @@
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from functools import lru_cache
 
 class Settings(BaseSettings):
     """
@@ -39,6 +40,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
+@lru_cache()
 def get_settings() -> Settings:
     """
     Instancie et retourne les paramètres de configuration globaux.
@@ -47,4 +49,4 @@ def get_settings() -> Settings:
     Returns:
         Settings: L'objet contenant toutes les variables de configuration typées et validées.
     """
-    pass
+    return Settings()
