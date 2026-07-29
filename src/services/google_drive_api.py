@@ -13,6 +13,8 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from src.utils.logger import get_logger
 from src.core.exceptions import GoogleAPIError
 
+# Initialisation du logger pour ce module
+logger = get_logger(__name__)
 
 class GoogleDriveService:
     """
@@ -37,9 +39,6 @@ class GoogleDriveService:
         
         # Verrou pour s'assurer qu'on ne lit/écrit pas le même fichier en parallèle
         self._lock = asyncio.Lock()
-        
-        # Initialisation du logger avec le nom du module
-        self.logger = get_logger(__name__)
 
 
     async def authenticate(self) -> None:
@@ -52,31 +51,31 @@ class GoogleDriveService:
     def _authenticate_sync(self) -> None:
         """Logique synchrone d'authentification Google."""
         creds = None
-        self.logger.debug("Vérification des tokens Google Drive...")
+        logger.debug("Vérification des tokens Google Drive...")
 
         # Chargement du token s'il existe
         if os.path.exists(self.token_path):
             try:
                 creds = Credentials.from_authorized_user_file(self.token_path, self.scopes)
             except Exception as e:
-                self.logger.warning(f"Le fichier token.json est corrompu ou illisible : {e}")
+                logger.warning(f"Le fichier token.json est corrompu ou illisible : {e}")
 
         # Si pas de credentials valides, on authentifie
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                self.logger.info("Rafraîchissement du token Google Drive...")
+                logger.info("Rafraîchissement du token Google Drive...")
                 try:
                     creds.refresh(Request())
                 except Exception as e:
-                    self.logger.error(f"Échec du rafraîchissement du token : {e}")
+                    logger.error(f"Échec du rafraîchissement du token : {e}")
                     raise GoogleAPIError("Impossible de rafraîchir le token Google Drive.")
             else:
-                self.logger.info("Lancement du flux d'authentification OAuth local...")
+                logger.info("Lancement du flux d'authentification OAuth local...")
                 try:
                     flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, self.scopes)
                     creds = flow.run_local_server(port=0)
                 except Exception as e:
-                    self.logger.error(f"Erreur lors de l'authentification via credentials.json : {e}")
+                    logger.error(f"Erreur lors de l'authentification via credentials.json : {e}")
                     raise GoogleAPIError(f"Vérifiez votre fichier credentials.json : {e}")
 
             # Sauvegarde du nouveau token
@@ -85,9 +84,9 @@ class GoogleDriveService:
 
         try:
             self.service = build('drive', 'v3', credentials=creds)
-            self.logger.info("Authentification Google Drive réussie.")
+            logger.info("Authentification Google Drive réussie.")
         except Exception as e:
-            self.logger.error(f"Erreur lors de la construction du service Drive : {e}")
+            logger.error(f"Erreur lors de la construction du service Drive : {e}")
             raise GoogleAPIError(f"Construction du service Drive échouée : {e}")
 
     async def find_file_or_folder(self, name: str, mime_type: Optional[str] = None, parent_id: Optional[str] = None) -> Optional[str]:
@@ -106,7 +105,7 @@ class GoogleDriveService:
         if parent_id:
             query += f" and '{parent_id}' in parents"
 
-        self.logger.debug(f"Recherche Google Drive avec la requête : {query}")
+        logger.debug(f"Recherche Google Drive avec la requête : {query}")
 
         try:
             results = self.service.files().list(
@@ -118,7 +117,7 @@ class GoogleDriveService:
                 return None
             return items[0]['id']
         except Exception as e:
-            self.logger.error(f"Erreur lors de la recherche Drive pour '{name}' : {e}")
+            logger.error(f"Erreur lors de la recherche Drive pour '{name}' : {e}")
             raise GoogleAPIError(f"Recherche Drive échouée : {e}")
 
     async def create_folder(self, folder_name: str, parent_id: Optional[str] = None) -> str:
@@ -141,10 +140,10 @@ class GoogleDriveService:
         try:
             file = self.service.files().create(body=file_metadata, fields='id').execute()
             folder_id = file.get('id')
-            self.logger.info(f"Dossier '{folder_name}' créé avec succès (ID: {folder_id}).")
+            logger.info(f"Dossier '{folder_name}' créé avec succès (ID: {folder_id}).")
             return folder_id
         except Exception as e:
-            self.logger.error(f"Erreur lors de la création du dossier '{folder_name}' : {e}")
+            logger.error(f"Erreur lors de la création du dossier '{folder_name}' : {e}")
             raise GoogleAPIError(f"Création de dossier échouée : {e}")
 
     async def download_file_content(self, file_id: str) -> str:
@@ -159,7 +158,7 @@ class GoogleDriveService:
         if not self.service:
             raise GoogleAPIError("Service Drive non authentifié.")
 
-        self.logger.debug(f"Téléchargement du fichier ID {file_id}...")
+        logger.debug(f"Téléchargement du fichier ID {file_id}...")
         try:
             request = self.service.files().get_media(fileId=file_id)
             fh = io.BytesIO()
@@ -170,10 +169,10 @@ class GoogleDriveService:
                 status, done = downloader.next_chunk()
             
             content = fh.getvalue().decode('utf-8')
-            self.logger.info(f"Contenu du fichier {file_id} téléchargé avec succès.")
+            logger.info(f"Contenu du fichier {file_id} téléchargé avec succès.")
             return content
         except Exception as e:
-            self.logger.error(f"Erreur de téléchargement pour le fichier {file_id} : {e}")
+            logger.error(f"Erreur de téléchargement pour le fichier {file_id} : {e}")
             raise GoogleAPIError(f"Téléchargement Drive échoué : {e}")
 
     async def update_file_content(self, file_id: str, new_content: str) -> bool:
@@ -188,7 +187,7 @@ class GoogleDriveService:
         if not self.service:
             raise GoogleAPIError("Service Drive non authentifié.")
 
-        self.logger.debug(f"Mise à jour du fichier ID {file_id}...")
+        logger.debug(f"Mise à jour du fichier ID {file_id}...")
         try:
             # Création du flux binaire à partir du nouveau texte (pour le format Markdown .md)
             media_body = MediaIoBaseUpload(
@@ -203,8 +202,8 @@ class GoogleDriveService:
                 media_body=media_body
             ).execute()
             
-            self.logger.info(f"Fichier {file_id} écrasé et mis à jour avec succès.")
+            logger.info(f"Fichier {file_id} écrasé et mis à jour avec succès.")
             return True
         except Exception as e:
-            self.logger.error(f"Erreur lors de la mise à jour du fichier {file_id} : {e}")
+            logger.error(f"Erreur lors de la mise à jour du fichier {file_id} : {e}")
             raise GoogleAPIError(f"Mise à jour Drive échouée : {e}")

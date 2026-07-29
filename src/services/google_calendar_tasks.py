@@ -10,6 +10,9 @@ from src.core.models import AgendaTaskRequest
 from src.utils.logger import get_logger
 from src.core.exceptions import GoogleAPIError
 
+# Initialisation du logger pour ce module
+logger = get_logger(__name__)
+
 class GoogleCalendarTasksService:
     """
     Gère les interactions avec Google Tasks et Google Calendar pour la création
@@ -28,9 +31,8 @@ class GoogleCalendarTasksService:
         # sinon on prend la valeur par défaut
         self.token_path = getattr(drive_service, 'token_path', 'token.json')
         
-        # Initialisation du logger pour ce module
-        self.logger = get_logger(__name__)
-        self.logger.debug("GoogleCalendarTasksService initialisé.")
+        
+        logger.debug("GoogleCalendarTasksService initialisé.")
 
     async def create_google_task(self, request: AgendaTaskRequest) -> str:
         """
@@ -50,7 +52,7 @@ class GoogleCalendarTasksService:
         Logique synchrone de création de tâche, exécutée dans un thread séparé.
         """
         try:
-            self.logger.debug(f"Tentative de création d'une tâche Tasks : {request.titre}")
+            logger.debug(f"Tentative de création d'une tâche Tasks : {request.titre}")
             
             # Récupération des accès via le fichier généré par le service Drive
             creds = Credentials.from_authorized_user_file(self.token_path)
@@ -74,11 +76,11 @@ class GoogleCalendarTasksService:
             result = service.tasks().insert(tasklist='@default', body=task_body).execute()
             
             task_id = result.get('id')
-            self.logger.info(f"Tâche Google Tasks créée avec succès (ID: {task_id}).")
+            logger.info(f"Tâche Google Tasks créée avec succès (ID: {task_id}).")
             return task_id
             
         except Exception as e:
-            self.logger.error(f"Erreur lors de la création de la tâche Google Tasks : {e}")
+            logger.error(f"Erreur lors de la création de la tâche Google Tasks : {e}")
             raise GoogleAPIError(f"Création de la tâche échouée : {e}")
 
     def generate_calendar_link(self, request: AgendaTaskRequest) -> str:
@@ -117,5 +119,5 @@ class GoogleCalendarTasksService:
         query_string = urlencode(params)
         link = f"{base_url}?{query_string}"
         
-        self.logger.info(f"Lien Google Calendar généré avec succès pour : '{request.titre}'.")
+        logger.info(f"Lien Google Calendar généré avec succès pour : '{request.titre}'.")
         return link

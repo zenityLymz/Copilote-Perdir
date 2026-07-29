@@ -34,7 +34,7 @@ class Settings(BaseSettings):
 
     # --- Configuration ChromaDB ---
     CHROMA_PERSIST_DIR: str = "data/chroma_db"
-    EMBEDDING_MODEL_NAME: str = "models/text-embedding-004"
+    EMBEDDING_MODEL_NAME: str = "gemini-embedding-001"
 
     # Comportement de Pydantic pour lire le fichier .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

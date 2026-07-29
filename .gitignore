@@ -7,3 +7,6 @@ token.json
 __pycache__/
 *.pyc
 tests/
+
+# Base de données vectorielle locale
+data/
