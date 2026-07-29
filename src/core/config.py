@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # --- Configuration Gemini IA ---
     GEMINI_API_KEY: str
-    GEMINI_FLASH_MODEL: str = "gemini-1.5-flash"
+    GEMINI_FLASH_MODEL: str = "gemini-3.5-flash"
     GEMINI_PRO_MODEL: str = "gemini-1.5-pro"
 
     # --- Configuration Google API ---
