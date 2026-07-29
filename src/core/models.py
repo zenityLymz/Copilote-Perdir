@@ -41,13 +41,24 @@ class MailObject(BaseModel):
     est_traite: bool = Field(default=False, description="Indique si le mail a déjà été traité par le workflow")
     nombre_tokens: Optional[int] = Field(None, description="Taille estimée du texte pour sécuriser l'envoi vers l'API d'embeddings")
 
-class TriDecision(BaseModel):
-    """Décision prise par l'IA lors du triage actif de la messagerie."""
-    id_mail: str
+class IA_TriResponse(BaseModel):
+    """
+    Objet DTO (Data Transfer Object) représentant uniquement 
+    la production intellectuelle attendue de l'IA.
+    L'IA ne manipule pas les IDs techniques.
+    """
     niveau_priorite: NiveauPriorite = Field(..., description="Niveau d'urgence évalué par l'IA")
     dossier_cible: str = Field(..., description="Nom du dossier physique IMAP de destination")
     justification: str = Field(..., description="Brève explication de la décision de l'IA")
-    necessite_notification: bool = Field(..., description="Vrai si notification Telegram requise (mail très urgent)")
+    necessite_notification: bool = Field(..., description="Vrai si notification Telegram requise")
+
+class TriDecision(IA_TriResponse):
+    """
+    L'objet métier complet circulant dans l'application.
+    Il combine l'intelligence de l'IA (héritage) et le contexte technique (id_mail).
+    """
+    id_mail: str = Field(..., description="Identifiant unique de l'e-mail provenant d'IMAP")
+
 
 class EventLog(BaseModel):
     """Entrée pour la main courante (traçabilité d'événements sensibles)."""
