@@ -6,12 +6,12 @@ from enum import Enum
 # --- Énumérations ---
 
 class RouteChoice(str, Enum):
-    """Les 5 routes métiers exclusives du Pipeline B (Telegram)."""
     AGENDA = "agenda"
     RAG_SEARCH = "rag_search"
     BRIEFING = "briefing"
     MAIN_COURANTE = "main_courante"
     STRATEGIC_BUFFER = "strategic_buffer"
+    AUCUN_OU_INCOMPLET = "aucun_ou_incomplet"
 
 class TypeActionAgenda(str, Enum):
     TASK = "tâche_google_tasks"
@@ -62,13 +62,14 @@ class TriDecision(IA_TriResponse):
     id_mail: str = Field(..., description="Identifiant unique de l'e-mail provenant d'IMAP")
 
 class IA_RouterResponse(BaseModel):
-    """
-    Objet DTO généré par le RouterAgent (Structured Output).
-    Oblige l'IA à choisir l'une des 5 routes sans jamais halluciner de texte libre.
-    """
-    route_choisie: RouteChoice = Field(
+    """Objet DTO généré par le RouterAgent."""
+    routes_choisies: List[RouteChoice] = Field(
         ..., 
-        description="La route métier déterminée par l'analyse de l'intention du chef d'établissement."
+        description="Liste des routes métiers détectées. Peut contenir plusieurs routes si le message exprime plusieurs demandes."
+    )
+    explication: Optional[str] = Field(
+        None, 
+        description="Si la route 'aucun_ou_incomplet' est choisie, explique brièvement pourquoi (ex: 'Il manque la date pour l'agenda', 'Message inaudible')."
     )
 
 class AgendaTaskRequest(BaseModel):
