@@ -29,7 +29,10 @@ class GoogleDriveService:
         """
         self.credentials_path = credentials_path
         self.token_path = token_path
-        self.scopes = ['https://www.googleapis.com/auth/drive']
+        self.scopes = [
+            'https://www.googleapis.com/auth/drive',
+            'https://www.googleapis.com/auth/tasks'
+        ]
         self.service = None
         
         # Verrou pour s'assurer qu'on ne lit/écrit pas le même fichier en parallèle
