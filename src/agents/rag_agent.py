@@ -1,4 +1,10 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from google import genai
+
+from src.core.config import get_settings
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class RAGAgent:
     """
@@ -7,26 +13,11 @@ class RAGAgent:
     de la base vectorielle ChromaDB pour formuler une réponse précise.
     """
 
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash") -> None:
-        """
-        Initialise le client de l'API Gemini pour la synthèse documentaire.
-
-        Args:
-            api_key (str): La clé API Google Gemini.
-            model_name (str): Le modèle à utiliser.
-        """
+    def __init__(self, api_key: str, model_name: Optional[str] = None) -> None:
         pass
 
-    def generate_answer(self, query: str, retrieved_context: List[Dict[str, Any]]) -> str:
+    async def generate_answer(self, query: str, retrieved_context: List[Dict[str, Any]]) -> str:
         """
-        Génère une réponse à la question de l'utilisateur en se basant *uniquement* sur le contexte fourni (e-mails ou documents retrouvés).
-
-        Args:
-            query (str): La question posée par le chef d'établissement via Telegram.
-            retrieved_context (List[Dict[str, Any]]): Les documents extraits de ChromaDB 
-                                                      avec leurs métadonnées.
-
-        Returns:
-            str: La réponse formatée, prête à être envoyée sur Telegram.
+        Génère une réponse à la question de l'utilisateur en se basant *uniquement* sur le contexte fourni de manière asynchrone.
         """
         pass

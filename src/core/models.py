@@ -5,12 +5,6 @@ from enum import Enum
 
 # --- Énumérations ---
 
-class NiveauPriorite(str, Enum):
-    INFO = "info"
-    NORMAL = "normal"
-    IMPORTANT = "important"
-    URGENT = "urgent"
-
 class CategoriePilotage(str, Enum):
     BATI = "bâti"
     RH = "rh"
@@ -41,16 +35,29 @@ class MailObject(BaseModel):
     est_traite: bool = Field(default=False, description="Indique si le mail a déjà été traité par le workflow")
     nombre_tokens: Optional[int] = Field(None, description="Taille estimée du texte pour sécuriser l'envoi vers l'API d'embeddings")
 
+
 class IA_TriResponse(BaseModel):
     """
     Objet DTO (Data Transfer Object) représentant uniquement 
-    la production intellectuelle attendue de l'IA.
+    la production intellectuelle attendue de l'IA lors du triage.
     L'IA ne manipule pas les IDs techniques.
     """
-    niveau_priorite: NiveauPriorite = Field(..., description="Niveau d'urgence évalué par l'IA")
-    dossier_cible: str = Field(..., description="Nom du dossier physique IMAP de destination")
-    justification: str = Field(..., description="Brève explication de la décision de l'IA")
-    necessite_notification: bool = Field(..., description="Vrai si notification Telegram requise")
+    dossier_cible: str = Field(
+        ..., 
+        description="Nom du dossier physique IMAP de destination"
+    )
+    necessite_notification: bool = Field(
+        ..., 
+        description="Vrai si l'e-mail nécessite une alerte Telegram immédiate au chef d'établissement (urgence critique)"
+    )
+    necessite_main_courante: bool = Field(
+        ..., 
+        description="Vrai si l'e-mail relate un incident (violence, conflit, accident) nécessitant une traçabilité officielle"
+    )
+    justification: str = Field(
+        ..., 
+        description="Brève explication (1 ou 2 phrases maximum) de la décision de triage"
+    )
 
 class TriDecision(IA_TriResponse):
     """

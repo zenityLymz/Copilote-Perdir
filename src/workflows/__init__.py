@@ -1,11 +1,12 @@
 """
 Module d'orchestration (workflows)
 
-Ce module contient les classes de haut niveau qui orchestrent les processus métiers.
+Ce module contient les classes de haut niveau qui orchestrent les processus métiers 
+répartis en trois pipelines distincts (Passif, Actif, Différé).
 Les workflows n'implémentent pas de logique d'API directe, mais coordonnent 
 l'interaction entre les services (IMAP, Drive, Telegram) et les agents IA.
 """
 
-from .mail_pipeline import MailPipeline
-from .reporting import ReportingWorkflow
-from .strategic_memory import StrategicMemoryWorkflow
+from .pipeline_a_mails import PipelineAMails
+from .pipeline_b_telegram import PipelineBTelegram
+from .pipeline_c_synthesis import PipelineCSynthesis

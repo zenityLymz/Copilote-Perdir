@@ -1,58 +1,42 @@
-from typing import List
-from src.core.models import MailObject, PilotageInfo
-
-def get_pilotage_extraction_prompt(mail: MailObject) -> str:
+def get_pilotage_system_prompt() -> str:
     """
-    Construit le prompt évaluant si un e-mail nécessite d'être mémorisé pour 
-    le pilotage stratégique de l'établissement[cite: 18].
+    Génère le prompt système pour l'agent de synthèse (Gemini Pro).
     
-    Args:
-        mail (MailObject): L'e-mail source à analyser.
-        
+    Définit le rôle de l'assistant : agir comme un conseiller stratégique capable 
+    de prendre du recul sur les événements d'une journée. Il doit lire un flux 
+    d'informations hétérogènes, identifier ce qui relève du structurel/macroscopique 
+    (Bâti, RH, Finances, Climat), et l'intégrer intelligemment dans un document 
+    Markdown sans en casser l'arborescence.
+    
     Returns:
-        str: Le prompt visant à extraire l'information sous forme structurée.
+        str: Le prompt système imposant les règles strictes de fusion de contenu.
     """
     pass
 
-def get_pilotage_update_prompt(current_content: str, new_info: PilotageInfo) -> str:
+def build_pilotage_update_prompt(current_content: str, daily_info: str) -> str:
     """
-    Construit le prompt pour la mécanique de mise à jour ("Read-Rewrite-Replace")[cite: 29].
-    Demande à l'agent de synthèse (Gemini Pro) [cite: 30] de réécrire et fusionner intelligemment la nouveauté 
-    dans les rubriques concernées tout en conservant la structure globale intacte[cite: 31].
+    Construit le prompt pour la mécanique de mise à jour ("Read-Rewrite-Replace").
+    Demande à l'agent d'évaluer l'impact de `daily_info` sur `current_content` 
+    et de générer la nouvelle version intégrale du document.
     
     Args:
         current_content (str): Le contenu Markdown brut du fichier central de pilotage.
-        new_info (PilotageInfo): L'information synthétique à insérer.
+        daily_info (str): La concaténation des e-mails et notes Telegram de la journée.
         
     Returns:
-        str: Le prompt contenant les instructions de fusion.
+        str: Le prompt contenant les instructions de fusion et les données à traiter.
     """
     pass
 
-def get_main_courante_update_prompt(mail: MailObject, existing_tags: List[str]) -> str:
+def build_summary_prompt(changes_diff: str) -> str:
     """
-    Construit le prompt pour la mécanique de mise à jour ("Append" / Ajout continu).
-    Demande de structurer chaque entrée avec un système de balises/tags précis[cite: 35].
+    Construit un prompt demandant à l'IA de résumer de manière très concise 
+    les modifications qu'elle vient d'apporter au fichier de pilotage (pour Telegram).
     
     Args:
-        mail (MailObject): L'e-mail source ayant déclenché l'événement.
-        existing_tags (List[str]): Les tags extraits du fichier actuel, à réutiliser 
-                                   prioritairement pour éviter les doublons[cite: 37].
+        changes_diff (str): Les éléments modifiés ou le delta entre les deux versions.
         
     Returns:
-        str: Le prompt générant le texte structuré de l'événement à ajouter.
-    """
-    pass
-    
-def get_agenda_extraction_prompt(mail: MailObject) -> str:
-    """
-    Construit le prompt pour l'extraction automatique de rendez-vous ou de tâches 
-    afin de préparer les requêtes Google Tasks ou Calendar[cite: 23].
-    
-    Args:
-        mail (MailObject): L'e-mail reçu et analysé.
-        
-    Returns:
-        str: Le prompt ciblant la création d'un objet AgendaTaskRequest.
+        str: Le prompt demandant la création d'un court message de notification.
     """
     pass
