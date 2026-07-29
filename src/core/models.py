@@ -5,16 +5,13 @@ from enum import Enum
 
 # --- Énumérations ---
 
-class CategoriePilotage(str, Enum):
-    BATI = "bâti"
-    RH = "rh"
-    FINANCES = "finances"
-    CLIMAT = "climat"
-    AUTRE = "autre"
-
-class TypeMainCourante(str, Enum):
-    NOMINATIF = "nominatif"
-    EVENEMENTIEL = "événementiel"
+class RouteChoice(str, Enum):
+    """Les 5 routes métiers exclusives du Pipeline B (Telegram)."""
+    AGENDA = "agenda"
+    RAG_SEARCH = "rag_search"
+    BRIEFING = "briefing"
+    MAIN_COURANTE = "main_courante"
+    STRATEGIC_BUFFER = "strategic_buffer"
 
 class TypeActionAgenda(str, Enum):
     TASK = "tâche_google_tasks"
@@ -30,16 +27,14 @@ class MailObject(BaseModel):
     sujet: str = Field(..., description="Métadonnée : Objet du mail")
     contenu_texte: str = Field(..., description="Corps du message servant à générer les embeddings")
     pieces_jointes: List[str] = Field(default_factory=list, description="Noms des pièces jointes")
-    
-    # Nouveaux champs pour la production
     est_traite: bool = Field(default=False, description="Indique si le mail a déjà été traité par le workflow")
     nombre_tokens: Optional[int] = Field(None, description="Taille estimée du texte pour sécuriser l'envoi vers l'API d'embeddings")
 
 
 class IA_TriResponse(BaseModel):
     """
-    Objet DTO (Data Transfer Object) représentant uniquement 
-    la production intellectuelle attendue de l'IA lors du triage.
+    Objet DTO (Data Transfer Object) généré par le TriageAgent (Structured Output).
+    Pilote les 4 actions automatiques du Pipeline A.
     L'IA ne manipule pas les IDs techniques.
     """
     dossier_cible: str = Field(
@@ -61,29 +56,20 @@ class IA_TriResponse(BaseModel):
 
 class TriDecision(IA_TriResponse):
     """
-    L'objet métier complet circulant dans l'application.
+    L'objet métier complet circulant dans le Pipeline A.
     Il combine l'intelligence de l'IA (héritage) et le contexte technique (id_mail).
     """
     id_mail: str = Field(..., description="Identifiant unique de l'e-mail provenant d'IMAP")
 
-
-class EventLog(BaseModel):
-    """Entrée pour la main courante (traçabilité d'événements sensibles)."""
-    type_log: TypeMainCourante = Field(..., description="S'agit-il d'un suivi de personne ou d'un événement global ?")
-    cible_document: str = Field(..., description="Nom de l'élève, du personnel ou de l'événement pour cibler le bon Google Doc")
-    date_evenement: datetime = Field(default_factory=datetime.now, description="Incrémentation chronologique")
-    description_factuelle: str = Field(..., description="Description neutre et factuelle des faits")
-    actions_prises: Optional[str] = Field(None, description="Actions immédiates réalisées par le chef d'établissement")
-    
-    # Nouveau champ pour la traçabilité
-    source_id: Optional[str] = Field(None, description="ID du mail source ayant déclenché l'entrée dans la main courante")
-
-class PilotageInfo(BaseModel):
-    """Élément d'information stratégique pour le fichier de pilotage ultra-synthétique."""
-    date_extraction: datetime = Field(default_factory=datetime.now)
-    categorie: CategoriePilotage = Field(..., description="Thématique de l'information (Bâti, RH, Finances, Climat)")
-    synthese_info: str = Field(..., description="Synthèse de l'information structurelle ou macro")
-    source_id: Optional[str] = Field(None, description="ID du mail source extrait de manière autonome par l'IA")
+class IA_RouterResponse(BaseModel):
+    """
+    Objet DTO généré par le RouterAgent (Structured Output).
+    Oblige l'IA à choisir l'une des 5 routes sans jamais halluciner de texte libre.
+    """
+    route_choisie: RouteChoice = Field(
+        ..., 
+        description="La route métier déterminée par l'analyse de l'intention du chef d'établissement."
+    )
 
 class AgendaTaskRequest(BaseModel):
     """Requête extraite par l'IA pour interagir avec Google Tasks ou Calendar."""
@@ -91,6 +77,3 @@ class AgendaTaskRequest(BaseModel):
     titre: str = Field(..., description="Titre de la tâche ou de l'événement")
     date_cible: Optional[datetime] = Field(None, description="Date et heure cibles si détectées")
     description: Optional[str] = Field(None, description="Notes ou détails supplémentaires")
-    
-    # Nouveau champ pour la traçabilité
-    source_id: Optional[str] = Field(None, description="ID du mail source justifiant la tâche ou le RDV")

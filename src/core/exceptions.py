@@ -22,6 +22,15 @@ class AssistantPerdirError(Exception):
         super().__init__(self.message)
 
 
+class WorkflowError(AssistantPerdirError):
+    """
+    Exception levée par les orchestrateurs (Pipelines A, B, C) lorsqu'une 
+    logique métier globale échoue (ex: échec d'agrégation de données, route introuvable).
+    """
+    def __init__(self, message: str = "Erreur lors de l'exécution d'un workflow métier.") -> None:
+        super().__init__(message)
+
+
 class IMAPError(AssistantPerdirError):
     """
     Exception levée lors d'un problème d'interaction avec le serveur de messagerie académique.

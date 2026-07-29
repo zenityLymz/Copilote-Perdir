@@ -12,19 +12,20 @@ propres et concis (ex: `from src.core import MailObject, get_settings`).
 
 # --- Modèles de données ---
 from .models import (
+    RouteChoice,
+    TypeActionAgenda,
     MailObject,
+    IA_TriResponse,
     TriDecision,
-    EventLog,
-    PilotageInfo,
-    AgendaTaskRequest,
-    NiveauPriorite,
-    CategoriePilotage,
-    TypeMainCourante,
-    TypeActionAgenda
+    IA_RouterResponse,
+    AgendaTaskRequest
 )
 
 # --- Configuration ---
-from .config import Settings, get_settings
+from .config import (
+    Settings, 
+    get_settings
+)
 
 # --- Exceptions métiers ---
 from .exceptions import (
@@ -33,5 +34,6 @@ from .exceptions import (
     AgentError,
     GoogleAPIError,
     ChromaDBError,
-    TelegramBotError
+    TelegramBotError,
+    WorkflowError
 )
