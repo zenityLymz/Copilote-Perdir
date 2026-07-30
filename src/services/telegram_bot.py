@@ -2,6 +2,7 @@ from typing import Callable, Any, Awaitable
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.error import TelegramError
+from telegram.constants import ParseMode
 
 from src.utils.logger import get_logger
 from src.core.config import get_settings
@@ -71,7 +72,7 @@ class TelegramBotService:
         logger.debug("Tentative d'envoi d'une notification Telegram...")
         try:
             # On utilise bot.send_message pour envoyer directement à l'ID autorisé
-            await self.app.bot.send_message(chat_id=self._allowed_user_id, text=message)
+            await self.app.bot.send_message(chat_id=self._allowed_user_id, text=message, parse_mode=ParseMode.HTML)
             logger.info("Notification Telegram envoyée avec succès.")
             return True
         except TelegramError as e:

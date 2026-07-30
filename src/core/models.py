@@ -5,6 +5,13 @@ from enum import Enum
 
 # --- Énumérations ---
 
+class DossierCible(str, Enum):
+    INBOX = "Inbox"
+    A_TRAITER = "A traiter"
+    NON_URGENT = "Non urgent"
+    LECTURE = "Lecture"
+    TRASH = "Trash"
+
 class RouteChoice(str, Enum):
     AGENDA = "agenda"
     RAG_SEARCH = "rag_search"
@@ -34,20 +41,16 @@ class MailObject(BaseModel):
 class IA_TriResponse(BaseModel):
     """
     Objet DTO (Data Transfer Object) généré par le TriageAgent (Structured Output).
-    Pilote les 4 actions automatiques du Pipeline A.
+    Pilote les actions automatiques du Pipeline A.
     L'IA ne manipule pas les IDs techniques.
     """
-    dossier_cible: str = Field(
+    dossier_cible: DossierCible = Field(
         ..., 
         description="Nom du dossier physique IMAP de destination"
     )
     necessite_notification: bool = Field(
         ..., 
         description="Vrai si l'e-mail nécessite une alerte Telegram immédiate au chef d'établissement (urgence critique)"
-    )
-    necessite_main_courante: bool = Field(
-        ..., 
-        description="Vrai si l'e-mail relate un incident (violence, conflit, accident) nécessitant une traçabilité officielle"
     )
     justification: str = Field(
         ..., 

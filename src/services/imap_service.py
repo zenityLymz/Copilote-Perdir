@@ -78,13 +78,15 @@ class IMAPService:
         if not self.mail:
             raise IMAPError("Service IMAP non connecté.")
 
-        logger.info(f"Recherche de nouveaux messages (UNSEEN) dans le dossier '{folder}'...")
+        logger.info(f"Recherche de nouveaux messages non traités dans le dossier '{folder}'...")
         try:
             status, _ = self.mail.select(f'"{folder}"')
             if status != 'OK':
                 raise IMAPError(f"Dossier introuvable ou inaccessible : {folder}")
 
-            status, messages = self.mail.uid('search', None, 'UNSEEN')
+            # Recherche tous les mails qui n'ont PAS le flag personnalisé 'CopiloteTraite'
+            # (Qu'ils soient lus ou non lus par l'humain !)
+            status, messages = self.mail.uid('search', None, 'UNKEYWORD', 'CopiloteTraite')
             if status != 'OK' or not messages[0]:
                 logger.info("Aucun nouveau message trouvé.")
                 return []
@@ -93,8 +95,8 @@ class IMAPService:
             mail_ids = mail_ids[:limit]
             emails_list = []
             
-            for mail_id in mail_ids:
-                status, msg_data = self.mail.uid('fetch', mail_id, '(RFC822)')
+            for mail_id in mail_ids: # On utilise BODY.PEEK[] pour télécharger le mail sans enlever le flag UNSEEN
+                status, msg_data = self.mail.uid('fetch', mail_id, '(BODY.PEEK[])')
                 if status != 'OK':
                     continue
 
@@ -167,7 +169,7 @@ class IMAPService:
             
         try:
             uid_mail = decision.id_mail.encode('utf-8')
-            target_folder = f'"{decision.dossier_cible}"'
+            target_folder = f'"{decision.dossier_cible.value}"'
             
             logger.debug(f"Déplacement de l'e-mail {decision.id_mail} vers le dossier {target_folder}...")
             
@@ -189,22 +191,23 @@ class IMAPService:
             logger.error(f"Exception lors du déplacement de l'e-mail {decision.id_mail} : {e}")
             return False
 
-    async def mark_as_read(self, mail_id: str) -> bool:
-        """Marque un e-mail comme lu de manière asynchrone."""
-        return await asyncio.to_thread(self._mark_as_read_sync, mail_id)
+    async def mark_as_processed(self, mail_id: str) -> bool:
+        """Ajoute un tag invisible IMAP pour indiquer que l'IA a traité cet e-mail."""
+        return await asyncio.to_thread(self._mark_as_processed_sync, mail_id)
 
-    def _mark_as_read_sync(self, mail_id: str) -> bool:
-        """Logique IMAP de marquage \\Seen."""
+    def _mark_as_processed_sync(self, mail_id: str) -> bool:
+        """Logique IMAP d'ajout de mot-clé (Keyword) personnalisé."""
         if not self.mail:
             return False
             
         try:
             uid_mail = mail_id.encode('utf-8')
-            status, _ = self.mail.uid('STORE', uid_mail, '+FLAGS', '(\\Seen)')
+            # Ajout du tag personnalisé 'CopiloteTraite' (sans antislash car ce n'est pas un flag système)
+            status, _ = self.mail.uid('STORE', uid_mail, '+FLAGS', 'CopiloteTraite')
             success = (status == 'OK')
             if success:
-                logger.debug(f"E-mail {mail_id} marqué comme lu.")
+                logger.debug(f"E-mail {mail_id} tagué comme 'CopiloteTraite'.")
             return success
         except Exception as e:
-            logger.error(f"Erreur lors du marquage comme lu de l'e-mail {mail_id} : {e}")
+            logger.error(f"Erreur lors de l'ajout du tag à l'e-mail {mail_id} : {e}")
             return False
