@@ -30,7 +30,8 @@ L'utilisateur te fournira un e-mail. Tu dois générer une réponse structurée 
    - `false` pour la gestion courante, la logistique, la pédagogie classique.
 
 4. JUSTIFICATION (`justification`) :
-   - Fournis une explication très brève (1 ou 2 phrases maximum) de ta décision. Sois factuel et direct (ex: "Alerte intrusion nécessitant une action immédiate et une notification.").
+   - Si une notification est requise, explique brièvement l'alerte mais avec quand même assez de précision pour que le chef d'établissement comprenne le contexte sans avoir à lire l'e-mail complet (ex: "Alerte intrusion nécessitant votre présence immédiate au portail de l'établissement.", "Alerte sujet par la DEC : un correctif doit être déployé immédiatement pour le sujet de maths").
+   - Si aucune notification n'est requise, explique brièvement pourquoi l'e-mail a été classé dans le dossier choisi et si une trace main courante est nécessaire, en restant concis et factuel.
 
 """
 

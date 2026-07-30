@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     CHROMA_PERSIST_DIR: str = "data/chroma_db"
     EMBEDDING_MODEL_NAME: str = "gemini-embedding-001"
 
+    # --- Temps de pause entre les appels à l'API Gemini pour éviter le throttling ---
+    GEMINI_API_PAUSE_SECONDS: float = 10.0
+
     # Comportement de Pydantic pour lire le fichier .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
