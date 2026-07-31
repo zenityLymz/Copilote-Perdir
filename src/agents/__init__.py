@@ -9,6 +9,6 @@ spécialité métier distincte et utilise des prompts spécifiques.
 from .triage_agent import TriageAgent
 from .rag_agent import RAGAgent
 from .synth_agent import SynthAgent
-from .router_agent import RouterAgent
+from .orchestrator_agent import OrchestratorAgent
 from .briefing_agent import BriefingAgent
 from .main_courante_agent import MainCouranteAgent

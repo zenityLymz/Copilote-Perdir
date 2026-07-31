@@ -20,10 +20,6 @@ from .synth_prompts import (
     build_pilotage_update_prompt,
     build_summary_prompt
 )
-from .router_prompts import (
-    get_router_system_prompt,
-    build_router_prompt
-)
 from .briefing_prompts import (
     get_briefing_system_prompt,
     build_briefing_prompt
@@ -32,4 +28,8 @@ from .main_courante_prompts import (
     get_main_courante_system_prompt,
     build_main_courante_mail_prompt,
     build_main_courante_text_prompt
+)
+from .orchestrator_prompts import (
+    get_orchestrator_system_prompt,
+    build_orchestrator_prompt
 )

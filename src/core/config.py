@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     GOOGLE_TOKEN_PATH: str = "token.json"
 
     # --- Fichiers Drive (Markdown) ---
-    PILOTAGE_FILE_ID: str
+    MEMOIRE_FILE_ID: str
     MAIN_COURANTE_FILE_ID: str
 
     # --- Configuration ChromaDB ---

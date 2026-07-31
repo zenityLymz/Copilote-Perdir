@@ -12,13 +12,6 @@ class DossierCible(str, Enum):
     LECTURE = "Lecture"
     TRASH = "Trash"
 
-class RouteChoice(str, Enum):
-    AGENDA = "agenda"
-    RAG_SEARCH = "rag_search"
-    BRIEFING = "briefing"
-    MAIN_COURANTE = "main_courante"
-    STRATEGIC_BUFFER = "strategic_buffer"
-    AUCUN_OU_INCOMPLET = "aucun_ou_incomplet"
 
 class TypeActionAgenda(str, Enum):
     TASK = "tâche_google_tasks"
@@ -64,16 +57,6 @@ class TriDecision(IA_TriResponse):
     """
     id_mail: str = Field(..., description="Identifiant unique de l'e-mail provenant d'IMAP")
 
-class IA_RouterResponse(BaseModel):
-    """Objet DTO généré par le RouterAgent."""
-    routes_choisies: List[RouteChoice] = Field(
-        ..., 
-        description="Liste des routes métiers détectées. Peut contenir plusieurs routes si le message exprime plusieurs demandes."
-    )
-    explication: Optional[str] = Field(
-        None, 
-        description="Si la route 'aucun_ou_incomplet' est choisie, explique brièvement pourquoi (ex: 'Il manque la date pour l'agenda', 'Message inaudible')."
-    )
 
 class AgendaTaskRequest(BaseModel):
     """Requête extraite par l'IA pour interagir avec Google Tasks ou Calendar."""
@@ -81,3 +64,27 @@ class AgendaTaskRequest(BaseModel):
     titre: str = Field(..., description="Titre de la tâche ou de l'événement")
     date_cible: Optional[datetime] = Field(None, description="Date et heure cibles si détectées")
     description: Optional[str] = Field(None, description="Notes ou détails supplémentaires")
+
+
+class ConversationTurn(BaseModel):
+    """
+    Représente un tour de parole unique dans l'historique conversationnel.
+    """
+    role: str = Field(
+        ..., 
+        description="Le rôle de l'émetteur du message (généralement 'user', 'model' ou 'system')."
+    )
+    message: str = Field(
+        ..., 
+        description="Le contenu textuel du message."
+    )
+
+class ChatHistory(BaseModel):
+    """
+    Représente l'historique complet d'une conversation avec l'Agent Orchestrateur.
+    Permet à l'IA de conserver le contexte à court terme.
+    """
+    turns: List[ConversationTurn] = Field(
+        default_factory=list, 
+        description="Liste chronologique des échanges entre l'utilisateur et l'IA."
+    )
