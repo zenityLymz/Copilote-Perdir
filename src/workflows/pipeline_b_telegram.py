@@ -4,11 +4,11 @@ from typing import Optional
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.utils.logger import get_logger
-from src.agents.orchestrator_agent import OrchestratorAgent
-from src.services.telegram_bot import TelegramBotService
-from src.core.models import ChatHistory, ConversationTurn
-from src.utils.text_utils import split_telegram_message
+from src.utils import get_logger
+from src.agents import OrchestratorAgent
+from src.services import TelegramBotService
+from src.core import ChatHistory, ConversationTurn
+from src.utils import split_telegram_message
 
 # Initialisation du logger
 logger = get_logger(__name__)

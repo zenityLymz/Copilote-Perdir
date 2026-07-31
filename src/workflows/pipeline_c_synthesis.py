@@ -1,11 +1,9 @@
 from typing import List, Optional
 from datetime import datetime
 
-from src.services.google_drive_api import GoogleDriveService
-from src.services.telegram_bot import TelegramBotService
-from src.services.imap_service import IMAPService
-from src.agents.synth_agent import SynthAgent
-from src.core.models import MailObject
+from src.services import GoogleDriveService, TelegramBotService, IMAPService
+from src.agents import SynthAgent
+from src.core import MailObject
 
 
 class PipelineCSynthesis:

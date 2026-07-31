@@ -1,4 +1,4 @@
-from src.core.models import MailObject
+from src.core import MailObject
 
 def get_triage_system_prompt() -> str:
     """

@@ -10,8 +10,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
-from src.utils.logger import get_logger
-from src.core.exceptions import GoogleAPIError
+from src.utils import get_logger
+from src.core import GoogleAPIError
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)

@@ -6,9 +6,8 @@ from typing import Any
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from src.core.models import AgendaTaskRequest
-from src.utils.logger import get_logger
-from src.core.exceptions import GoogleAPIError
+from src.core import AgendaTaskRequest, GoogleAPIError
+from src.utils import get_logger
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)

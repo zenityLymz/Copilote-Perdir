@@ -7,10 +7,8 @@ from chromadb import Documents, EmbeddingFunction, Embeddings
 from google import genai
 from google.genai import types
 
-from src.core.models import MailObject
-from src.core.exceptions import ChromaDBError
-from src.core.config import get_settings
-from src.utils.logger import get_logger
+from src.core import MailObject, ChromaDBError, get_settings
+from src.utils import get_logger
 
 
 class CustomGeminiEmbeddingFunction(EmbeddingFunction):

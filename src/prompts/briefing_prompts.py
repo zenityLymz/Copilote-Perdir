@@ -1,5 +1,5 @@
 from typing import List, Optional
-from src.core.models import MailObject
+from src.core import MailObject
 
 def get_briefing_system_prompt() -> str:
     """

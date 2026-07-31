@@ -1,7 +1,7 @@
 from typing import List, Optional
 from datetime import datetime
 
-from src.core.models import MailObject
+from src.core import MailObject
 
 def get_main_courante_system_prompt() -> str:
     """

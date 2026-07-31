@@ -3,13 +3,10 @@ from datetime import datetime
 from typing import List, Optional
 import html
 
-from src.core.models import MailObject, TriDecision
-from src.services.imap_service import IMAPService
-from src.services.chroma_service import ChromaDBService
-from src.services.telegram_bot import TelegramBotService
-from src.agents.triage_agent import TriageAgent
-from src.utils.logger import get_logger
-from src.core.config import get_settings
+from src.core import MailObject, TriDecision, get_settings
+from src.services import IMAPService, ChromaDBService, TelegramBotService
+from src.agents import TriageAgent
+from src.utils import get_logger
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)

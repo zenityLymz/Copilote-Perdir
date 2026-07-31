@@ -12,13 +12,14 @@ propres et concis (ex: `from src.core import MailObject, get_settings`).
 
 # --- Modèles de données ---
 from .models import (
-    RouteChoice,
+    DossierCible,
     TypeActionAgenda,
     MailObject,
     IA_TriResponse,
     TriDecision,
-    IA_RouterResponse,
-    AgendaTaskRequest
+    AgendaTaskRequest,
+    ConversationTurn,
+    ChatHistory
 )
 
 # --- Configuration ---
