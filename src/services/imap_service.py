@@ -11,6 +11,10 @@ from src.core.exceptions import IMAPError
 from src.core.config import get_settings
 from src.utils.logger import get_logger
 
+from email.message import EmailMessage
+import time
+
+
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
 
@@ -100,54 +104,9 @@ class IMAPService:
                 if status != 'OK':
                     continue
 
-                for response_part in msg_data:
-                    if isinstance(response_part, tuple):
-                        msg = email.message_from_bytes(response_part[1], policy=policy.default)
-                        
-                        sujet = str(msg.get('subject', '(Sans objet)'))
-                        expediteur = str(msg.get('from', '(Expéditeur inconnu)'))
-                        
-                        # Parsing robuste de la date
-                        date_tuple = email.utils.parsedate_tz(msg.get('date'))
-                        if date_tuple:
-                            timestamp = email.utils.mktime_tz(date_tuple)
-                            date_reception = datetime.fromtimestamp(timestamp)
-                        else:
-                            date_reception = datetime.now()
-
-                        # Extraction du contenu texte et des PJ
-                        contenu_texte = ""
-                        pieces_jointes = []
-                        
-                        if msg.is_multipart():
-                            for part in msg.walk():
-                                content_type = part.get_content_type()
-                                content_disposition = str(part.get("Content-Disposition"))
-                                
-                                if "attachment" in content_disposition:
-                                    filename = part.get_filename()
-                                    if filename:
-                                        pieces_jointes.append(filename)
-                                elif content_type == "text/plain" and "attachment" not in content_disposition:
-                                    try:
-                                        contenu_texte += part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
-                                    except Exception:
-                                        pass
-                        else:
-                            try:
-                                contenu_texte = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
-                            except Exception:
-                                contenu_texte = str(msg.get_payload())
-
-                        mail_obj = MailObject(
-                            id_mail=mail_id.decode('utf-8'),
-                            date_reception=date_reception,
-                            expediteur=expediteur,
-                            sujet=sujet,
-                            contenu_texte=contenu_texte.strip() or "(Contenu vide ou illisible)",
-                            pieces_jointes=pieces_jointes
-                        )
-                        emails_list.append(mail_obj)
+                mail_obj = self._parse_email_from_bytes(mail_id, msg_data)
+                if mail_obj:
+                    emails_list.append(mail_obj)
 
             logger.info(f"{len(emails_list)} e-mail(s) non lu(s) récupéré(s) et formaté(s).")
             return emails_list
@@ -211,3 +170,187 @@ class IMAPService:
         except Exception as e:
             logger.error(f"Erreur lors de l'ajout du tag à l'e-mail {mail_id} : {e}")
             return False
+
+
+    async def save_draft(self, destinataire: str, sujet: str, contenu_texte: str, dossier_brouillons: str = '"Drafts"') -> bool:
+        """
+        Point d'entrée asynchrone pour sauvegarder un message dans le dossier des brouillons.
+        """
+        return await asyncio.to_thread(self._save_draft_sync, destinataire, sujet, contenu_texte, dossier_brouillons)
+
+    def _save_draft_sync(self, destinataire: str, sujet: str, contenu_texte: str, dossier_brouillons: str) -> bool:
+        """
+        Logique synchrone IMAP (commande APPEND) pour injecter un brouillon.
+        """
+
+        if not self.mail:
+            logger.error("Création du brouillon impossible : IMAP non connecté.")
+            return False
+            
+        try:
+            logger.debug(f"Construction de l'objet e-mail pour {destinataire}...")
+            
+            # Utilisation de l'API moderne d'email de Python
+            msg = EmailMessage()
+            msg['Subject'] = sujet
+            msg['From'] = self.user
+            msg['To'] = destinataire
+            msg.set_content(contenu_texte)
+
+            # Génération de la date interne au format IMAP
+            date_imap = imaplib.Time2Internaldate(time.time())
+
+            # La commande APPEND pousse le message sur le serveur avec le drapeau \Draft
+            status, _ = self.mail.append(
+                dossier_brouillons,
+                '(\\Draft)',
+                date_imap,
+                msg.as_bytes()
+            )
+
+            if status == 'OK':
+                logger.info("Le brouillon a été poussé avec succès sur le serveur IMAP.")
+                return True
+            else:
+                logger.warning(f"Le serveur IMAP a refusé l'enregistrement du brouillon (Status: {status}).")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Erreur technique lors de la création du brouillon IMAP : {e}")
+            return False
+
+
+    async def fetch_all_unseen_emails(self, limit_per_folder: int = 20) -> List[MailObject]:
+        """
+        Point d'entrée asynchrone pour parcourir tous les dossiers IMAP et récupérer
+        les e-mails strictement non lus par l'humain (flag UNSEEN).
+        """
+        return await asyncio.to_thread(self._fetch_all_unseen_emails_sync, limit_per_folder)
+
+    def _fetch_all_unseen_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
+        """
+        Logique synchrone qui liste tous les dossiers, les sélectionne un par un,
+        et récupère les messages UNSEEN.
+        """
+        import re
+        import email
+        from email import policy
+        import email.utils
+        from datetime import datetime
+        
+        if not self.mail:
+            raise IMAPError("Service IMAP non connecté.")
+
+        logger.info("Récupération de la liste de tous les dossiers IMAP...")
+        emails_list = []
+        
+        try:
+            status, folders = self.mail.list()
+            if status != 'OK':
+                raise IMAPError("Impossible de lister les dossiers de la messagerie.")
+
+            for folder_data in folders:
+                folder_str = folder_data.decode('utf-8')
+                
+                # Extraction propre du nom du dossier (qui se trouve à la fin de la chaîne)
+                match = re.search(r'\"([^\"]+)\"$', folder_str)
+                if match:
+                    folder_name = f'"{match.group(1)}"'
+                else:
+                    folder_name = folder_str.split()[-1]
+
+                # On sélectionne le dossier en mode lecture seule
+                status, _ = self.mail.select(folder_name, readonly=True)
+                if status != 'OK':
+                    continue # On ignore les dossiers inaccessibles (ex: \Noselect)
+
+                # Recherche STRICTE des mails non lus par l'humain
+                status, messages = self.mail.uid('search', None, 'UNSEEN')
+                if status != 'OK' or not messages[0]:
+                    continue
+
+                mail_ids = messages[0].split()
+                # On limite le nombre pour ne pas saturer la mémoire si un dossier a 500 mails non lus
+                mail_ids = mail_ids[-limit_per_folder:] 
+                
+                for mail_id in mail_ids:
+                    # On utilise BODY.PEEK[] pour lire le mail SANS enlever le drapeau UNSEEN !
+                    status, msg_data = self.mail.uid('fetch', mail_id, '(BODY.PEEK[])')
+                    if status != 'OK':
+                        continue
+
+                    mail_obj = self._parse_email_from_bytes(mail_id, msg_data)
+                    if mail_obj:
+                        emails_list.append(mail_obj)
+
+            logger.info(f"{len(emails_list)} e-mail(s) UNSEEN trouvé(s) au total dans l'arborescence.")
+            return emails_list
+
+        except Exception as e:
+            logger.error(f"Erreur lors du scan global des e-mails non lus : {e}")
+            raise IMAPError(f"Erreur IMAP globale : {e}")
+
+
+    def _parse_email_from_bytes(self, mail_id: bytes, msg_data: list) -> Optional[MailObject]:
+        """
+        Méthode utilitaire privée pour extraire et formater un objet MailObject 
+        à partir des données brutes renvoyées par la commande IMAP fetch.
+        """
+        import email
+        from email import policy
+        import email.utils
+        from datetime import datetime
+        
+        for response_part in msg_data:
+            if isinstance(response_part, tuple):
+                msg = email.message_from_bytes(response_part[1], policy=policy.default)
+                
+                sujet = str(msg.get('subject', '(Sans objet)'))
+                expediteur = str(msg.get('from', '(Expéditeur inconnu)'))
+                
+                # Parsing robuste de la date
+                date_tuple = email.utils.parsedate_tz(msg.get('date'))
+                if date_tuple:
+                    timestamp = email.utils.mktime_tz(date_tuple)
+                    date_reception = datetime.fromtimestamp(timestamp)
+                else:
+                    date_reception = datetime.now()
+
+                # Extraction du contenu texte et des PJ
+                contenu_texte = ""
+                pieces_jointes = []
+                
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        content_disposition = str(part.get("Content-Disposition"))
+                        
+                        if "attachment" in content_disposition:
+                            filename = part.get_filename()
+                            if filename:
+                                pieces_jointes.append(filename)
+                        elif content_type == "text/plain" and "attachment" not in content_disposition:
+                            try:
+                                contenu_texte += part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
+                            except Exception:
+                                pass
+                else:
+                    try:
+                        contenu_texte = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
+                    except Exception:
+                        contenu_texte = str(msg.get_payload())
+
+                # Gestion sécurisée du décodage de l'ID IMAP
+                id_str = mail_id.decode('utf-8') if isinstance(mail_id, bytes) else str(mail_id)
+
+                return MailObject(
+                    id_mail=id_str,
+                    date_reception=date_reception,
+                    expediteur=expediteur,
+                    sujet=sujet,
+                    contenu_texte=contenu_texte.strip() or "(Contenu vide ou illisible)",
+                    pieces_jointes=pieces_jointes
+                )
+                
+        # Si la boucle se termine sans rien trouver
+        return None

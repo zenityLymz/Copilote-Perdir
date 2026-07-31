@@ -10,3 +10,5 @@ tests/
 
 # Base de données vectorielle locale
 data/
+
+fusion.py
