@@ -22,6 +22,16 @@ from .models import (
     ChatHistory
 )
 
+# --- Dependencies (Service Locator) ---
+from .dependencies import (
+    get_imap_service,
+    set_imap_service,
+    get_chroma_service,
+    set_chroma_service,
+    get_drive_service,
+    set_drive_service
+)
+
 # --- Configuration ---
 from .config import (
     Settings, 

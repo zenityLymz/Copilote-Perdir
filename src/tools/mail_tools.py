@@ -1,5 +1,6 @@
 from typing import Optional
 from src.utils import get_logger
+from src.core import get_imap_service, get_chroma_service
 
 # Initialisation du logger
 logger = get_logger(__name__)
@@ -33,16 +34,13 @@ async def rechercher_dans_les_emails(requete_semantique: str) -> str:
         str: Le contexte textuel reconstitué à partir des e-mails les plus pertinents, 
              ou un message clair si rien n'a été trouvé.
     """
-    from src.services.chroma_service import ChromaDBService
-    from src.core.config import get_settings
     
     logger.info(f"Outil 'rechercher_dans_les_emails' appelé avec la requête : '{requete_semantique}'")
+
+    # Récupération de l'instance ChromaDB déjà initialisée depuis le registre
+    chroma_service = get_chroma_service()
     
     try:
-        settings = get_settings()
-        # Initialisation du service ChromaDB (qui pointe vers le dossier local)
-        chroma_service = ChromaDBService(persist_directory=settings.CHROMA_PERSIST_DIR)
-        
         # On demande les 5 e-mails les plus pertinents sémantiquement
         resultats = await chroma_service.search_semantic(query=requete_semantique, n_results=5)
         
@@ -88,12 +86,11 @@ async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_messag
     Returns:
         bool: True si le brouillon a été synchronisé sur le serveur avec succès, False sinon.
     """
-    from src.services.imap_service import IMAPService
     
     logger.info(f"Outil 'enregistrer_brouillon_mail' appelé pour le ou les destinataire(s) : {destinataire}")
     
-    # L'outil instancie son propre accès IMAP de manière éphémère
-    imap_service = IMAPService()
+    # Récupération de l'instance IMAP déjà connectée depuis le registre
+    imap_service = get_imap_service()
     
     try:
         await imap_service.connect()
@@ -128,12 +125,11 @@ async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
         str: Le résumé structuré des e-mails correspondants généré par l'Agent de Briefing, 
              ou un message indiquant qu'aucun nouveau mail ne correspond.
     """
-    from src.services.imap_service import IMAPService
     from src.agents.briefing_agent import BriefingAgent
     from src.core.config import get_settings
     
     logger.info(f"Outil 'generer_briefing_emails' appelé avec les critères : '{criteres}'")    
-    imap_service = IMAPService()
+    imap_service = get_imap_service()
     settings = get_settings()
     
     briefing_agent = BriefingAgent(
