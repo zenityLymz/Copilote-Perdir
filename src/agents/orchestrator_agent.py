@@ -14,9 +14,16 @@ from src.prompts.orchestrator_prompts import (
 )
 
 # Importation de tous les outils (Function Calling) mis à disposition de l'IA
-from src.tools.calendar_tools import creer_evenement_agenda, creer_tache, programmer_alerte
-from src.tools.drive_tools import ajouter_main_courante, rechercher_document_drive
-from src.tools.mail_tools import rechercher_dans_les_emails, enregistrer_brouillon_mail, generer_briefing_emails
+from src.tools import (
+    creer_evenement_agenda, 
+    creer_tache, 
+    programmer_alerte, 
+    ajouter_main_courante, 
+    rechercher_document_drive, 
+    rechercher_dans_les_emails, 
+    enregistrer_brouillon_mail, 
+    generer_briefing_emails
+)
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
