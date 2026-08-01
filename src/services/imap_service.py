@@ -6,7 +6,9 @@ import email.utils
 from datetime import datetime
 from typing import List, Optional
 
-from src.core import MailObject, TriDecision, IMAPError, get_settings
+from src.core.models import MailObject, TriDecision
+from src.core.exceptions import IMAPError
+from src.core.config import get_settings
 from src.utils import get_logger
 
 from email.message import EmailMessage

@@ -123,7 +123,7 @@ class OrchestratorAgent:
             chat = self.client.aio.chats.create(
                 model=self.model_name,
                 history=formatted_history,
-                config=types.ChatConfig(
+                config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     tools=self._get_available_tools(),
                     temperature=0.4, # Un peu de créativité pour le naturel, mais reste déterministe

@@ -55,31 +55,43 @@ def truncate_text_for_llm(text: str, max_tokens: int) -> str:
     """
     pass
 
-def split_telegram_message(text: str, max_length: int = 4000) -> List[str]:
+
+def split_telegram_message(text: str, max_length: int = 4096) -> List[str]:
     """
-    Découpe un texte long (ex: Briefing ou Synthèse nocturne) en une liste de 
-    messages plus courts pour respecter la limite stricte de l'API Telegram 
-    (4096 caractères). Tente de couper proprement sur les sauts de ligne.
+    Découpe un texte trop long en plusieurs morceaux pour respecter 
+    la limite de caractères de l'API Telegram.
+    
+    Tente de couper intelligemment sur les sauts de ligne pour éviter 
+    de casser des phrases ou le formatage Markdown (gras, listes).
 
     Args:
-        text (str): Le texte intégral à envoyer.
-        max_length (int): La limite de caractères par morceau (4000 par sécurité).
+        text (str): Le texte généré par l'IA à envoyer.
+        max_length (int): La limite maximale de Telegram (4096).
 
     Returns:
-        List[str]: Une liste de sous-chaînes prêtes à être envoyées séquentiellement.
+        List[str]: Une liste contenant les différents morceaux du message.
     """
-    pass
-
-def escape_telegram_markdown(text: str) -> str:
-    """
-    Échappe les caractères spéciaux requis par le parseur 'MarkdownV2' de l'API Telegram 
-    (ex: -, ., !, (, )) pour éviter que l'envoi du message ne crashe.
-    Cette fonction préserve le formatage généré par le LLM (gras, italique, listes).
-
-    Args:
-        text (str): Le texte Markdown généré par l'IA.
-
-    Returns:
-        str: Le texte formaté et sécurisé pour l'envoi via le TelegramBotService.
-    """
-    pass
+    if not text:
+        return []
+        
+    chunks = []
+    
+    while len(text) > max_length:
+        # On cherche le dernier saut de ligne présent AVANT la limite des 4096 caractères
+        split_index = text.rfind('\n', 0, max_length)
+        
+        # Si on ne trouve aucun saut de ligne (texte très compact), on coupe de force à la limite
+        if split_index == -1:
+            split_index = max_length
+            
+        # On ajoute le morceau à la liste
+        chunks.append(text[:split_index])
+        
+        # On met à jour le texte restant en enlevant les espaces/retours à la ligne résiduels au début
+        text = text[split_index:].lstrip()
+        
+    # S'il reste du texte à la fin de la boucle, on l'ajoute
+    if text:
+        chunks.append(text)
+        
+    return chunks

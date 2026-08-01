@@ -19,46 +19,79 @@
 
 from typing import List, Optional
 from google import genai
+from google.genai import types
 
 from src.core.models import MailObject
 from src.core.config import get_settings
+from src.core.exceptions import AgentError
 from src.utils.logger import get_logger
+
+# Importation des constructeurs de prompts que nous venons de créer
+from src.prompts.briefing_prompts import (
+    get_briefing_system_prompt,
+    build_briefing_prompt
+)
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
 
 class BriefingAgent:
     """
-    Agent IA spécialisé dans la synthèse et le résumé d'e-mails (Route Briefing).
-    Il agrège une liste d'e-mails (urgents ou non lus) et génère un rapport 
+    Agent IA spécialisé dans la synthèse et le résumé d'e-mails.
+    Il agrège une liste d'e-mails et génère un rapport 
     structuré, concis et directement lisible sur Telegram.
     """
 
     def __init__(self, api_key: str, model_name: Optional[str] = None) -> None:
         """
         Initialise le client de l'API Gemini pour la génération de briefings.
-
-        Args:
-            api_key (str): La clé API Google Gemini.
-            model_name (Optional[str]): Le nom du modèle à utiliser (Gemini Flash recommandé).
         """
-        pass
+        try:
+            settings = get_settings()
+            self.client = genai.Client(api_key=api_key)
+            # Utilisation de Gemini Flash par défaut : il est ultra-rapide 
+            # et largement assez intelligent pour de la synthèse de texte.
+            self.model_name = model_name or settings.GEMINI_FLASH_MODEL
+            
+            logger.debug(f"BriefingAgent initialisé avec succès (Modèle: {self.model_name}).")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'initialisation du client Gemini (Briefing) : {e}")
+            raise AgentError(f"Impossible d'initialiser l'Agent de Briefing : {e}")
 
     async def generate_briefing(self, emails: List[MailObject], user_instruction: Optional[str] = None) -> str:
         """
         Analyse une liste d'e-mails et génère un résumé structuré de manière asynchrone.
-        Prend en compte les instructions spécifiques de l'utilisateur si fournies 
-        (ex: "Fais-moi un point uniquement sur les urgences RH").
-
-        Args:
-            emails (List[MailObject]): La liste des e-mails extraits via l'IMAPService.
-            user_instruction (Optional[str]): Une précision éventuelle donnée par 
-                                              le chef d'établissement via Telegram.
-
-        Returns:
-            str: Le texte du briefing formaté en Markdown, prêt à être expédié sur Telegram.
         """
-        pass
+        if not emails:
+            return "Aucun e-mail à résumer."
+
+        logger.info(f"Début de la génération du briefing pour {len(emails)} e-mails. (Critère : {user_instruction or 'Aucun'})")
+        
+        try:
+            # 1. Préparation des prompts
+            system_prompt = get_briefing_system_prompt()
+            user_prompt = build_briefing_prompt(emails, user_instruction)
+
+            # 2. Appel asynchrone à l'API Gemini
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    # Température basse (0.2) : On veut de la précision factuelle, pas de l'invention littéraire
+                    temperature=0.2, 
+                )
+            )
+
+            if not response.text:
+                raise AgentError("La réponse générée par Gemini (BriefingAgent) est vide.")
+
+            logger.info("Briefing généré avec succès.")
+            return response.text.strip()
+
+        except Exception as e:
+            logger.error(f"Échec de la génération du briefing : {e}", exc_info=True)
+            raise AgentError(f"Erreur lors de l'appel à l'API Gemini (Briefing) : {e}")
 
 
 ============================================================
@@ -221,9 +254,16 @@ from src.prompts.orchestrator_prompts import (
 )
 
 # Importation de tous les outils (Function Calling) mis à disposition de l'IA
-from src.tools.calendar_tools import creer_evenement_agenda, creer_tache, programmer_alerte
-from src.tools.drive_tools import ajouter_main_courante, rechercher_document_drive
-from src.tools.mail_tools import rechercher_historique_emails, creer_brouillon_mail, generer_briefing_emails
+from src.tools import (
+    creer_evenement_agenda, 
+    creer_tache, 
+    programmer_alerte, 
+    ajouter_main_courante, 
+    rechercher_document_drive, 
+    rechercher_dans_les_emails, 
+    enregistrer_brouillon_mail, 
+    generer_briefing_emails
+)
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
@@ -269,8 +309,8 @@ class OrchestratorAgent:
             programmer_alerte,
             ajouter_main_courante,
             rechercher_document_drive,
-            rechercher_historique_emails,
-            creer_brouillon_mail,
+            rechercher_dans_les_emails,
+            enregistrer_brouillon_mail,
             generer_briefing_emails
         ]
 
@@ -323,7 +363,7 @@ class OrchestratorAgent:
             chat = self.client.aio.chats.create(
                 model=self.model_name,
                 history=formatted_history,
-                config=types.ChatConfig(
+                config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     tools=self._get_available_tools(),
                     temperature=0.4, # Un peu de créativité pour le naturel, mais reste déterministe
@@ -630,6 +670,65 @@ def get_settings() -> Settings:
 
 
 ============================================================
+--- FICHIER : src/core/dependencies.py ---
+============================================================
+
+"""
+Registre des dépendances (Service Locator)
+
+Ce module stocke les instances uniques (Singletons) des services 
+nécessitant une connexion persistante (IMAP, Base de données, API Google).
+Cela évite de recréer et reconnecter les services à chaque appel d'outil,
+garantissant ainsi des performances optimales et le respect des limites des serveurs.
+"""
+from __future__ import annotations
+from typing import Optional, TYPE_CHECKING
+
+# TYPE_CHECKING est Vrai pour l'éditeur de code (VS Code), 
+# mais Faux quand le programme s'exécute, ce qui évite l'import circulaire !
+if TYPE_CHECKING:
+    from src.services.imap_service import IMAPService
+    from src.services.chroma_service import ChromaDBService
+    from src.services.google_drive_api import GoogleDriveService
+
+# L'astuce est de mettre le nom du type entre guillemets ('IMAPService') 
+# car la classe n'est pas "réellement" importée à l'exécution.
+_imap_service: Optional['IMAPService'] = None
+_chroma_service: Optional['ChromaDBService'] = None
+_drive_service: Optional['GoogleDriveService'] = None
+
+# --- Service IMAP ---
+def get_imap_service() -> IMAPService:
+    if _imap_service is None:
+        raise RuntimeError("Le service IMAP n'a pas été initialisé dans le registre.")
+    return _imap_service
+
+def set_imap_service(service: IMAPService) -> None:
+    global _imap_service
+    _imap_service = service
+
+# --- Service ChromaDB (Base vectorielle) ---
+def get_chroma_service() -> ChromaDBService:
+    if _chroma_service is None:
+        raise RuntimeError("Le service ChromaDB n'a pas été initialisé dans le registre.")
+    return _chroma_service
+
+def set_chroma_service(service: ChromaDBService) -> None:
+    global _chroma_service
+    _chroma_service = service
+
+# --- Service Google Drive ---
+def get_drive_service() -> GoogleDriveService:
+    if _drive_service is None:
+        raise RuntimeError("Le service Google Drive n'a pas été initialisé dans le registre.")
+    return _drive_service
+
+def set_drive_service(service: GoogleDriveService) -> None:
+    global _drive_service
+    _drive_service = service
+
+
+============================================================
 --- FICHIER : src/core/exceptions.py ---
 ============================================================
 
@@ -855,13 +954,24 @@ propres et concis (ex: `from src.core import MailObject, get_settings`).
 
 # --- Modèles de données ---
 from .models import (
-    RouteChoice,
+    DossierCible,
     TypeActionAgenda,
     MailObject,
     IA_TriResponse,
     TriDecision,
-    IA_RouterResponse,
-    AgendaTaskRequest
+    AgendaTaskRequest,
+    ConversationTurn,
+    ChatHistory
+)
+
+# --- Dependencies (Service Locator) ---
+from .dependencies import (
+    get_imap_service,
+    set_imap_service,
+    get_chroma_service,
+    set_chroma_service,
+    get_drive_service,
+    set_drive_service
 )
 
 # --- Configuration ---
@@ -887,7 +997,7 @@ from .exceptions import (
 ============================================================
 
 from typing import List, Optional
-from src.core.models import MailObject
+from src.core import MailObject
 
 def get_briefing_system_prompt() -> str:
     """
@@ -895,29 +1005,51 @@ def get_briefing_system_prompt() -> str:
     
     Définit le rôle de l'assistant : résumer de manière ultra-concise, professionnelle
     et structurée une liste d'e-mails pour une lecture rapide sur un écran de 
-    smartphone (via Telegram). Le prompt doit imposer l'utilisation de listes à puces 
-    et d'émojis pertinents, tout en évitant les détails superflus.
-    
-    Returns:
-        str: Le prompt système contenant les règles strictes de synthèse et de formatage.
+    smartphone (via Telegram).
     """
-    pass
+    return """Tu es un Secrétaire de Direction IA ultra-efficace, travaillant pour un Chef d'Établissement (Perdir).
+Ta mission est de lire une liste d'e-mails bruts non lus et d'en faire un briefing de lecture rapide et percutant pour Telegram.
+
+RÈGLES DE RÉDACTION STRICTES :
+1. CONCISION EXTRÊME : Le chef d'établissement est pressé. Va droit au but. Ne fais pas de longues phrases.
+2. FORMAT TELEGRAM (HTML) : Utilise des listes à puces (-) en début de ligne. Mets les éléments clés (noms, dates, sujets) en gras en utilisant STRICTEMENT les balises HTML <b>ton texte</b>. N'utilise jamais les astérisques (**).
+3. ÉMOJIS UTILES : Utilise un (et un seul) émoji pertinent au début de chaque point pour catégoriser visuellement l'e-mail (ex: 🔴 pour urgent, 💶 pour finances, 👥 pour RH/Parents, 📅 pour agenda).
+4. REGROUPEMENT : Si plusieurs e-mails parlent du même sujet, regroupe-les intelligemment dans un seul point.
+5. TON : Professionnel, neutre et institutionnel.
+6. INSTRUCTIONS SPÉCIFIQUES : Si l'utilisateur a donné une instruction de filtrage (ex: "Que les urgences"), tu DOIS ignorer tous les e-mails qui ne correspondent pas à ce critère. Si aucun e-mail ne correspond au critère, dis-le simplement de manière courtoise.
+7. PAS DE BLA-BLA : Ne commence pas par "Voici votre résumé" et ne finis pas par "Avez-vous besoin d'autre chose ?". Renvoie UNIQUEMENT le contenu du briefing.
+"""
 
 def build_briefing_prompt(emails: List[MailObject], user_instruction: Optional[str] = None) -> str:
     """
     Construit le prompt utilisateur en agrégeant les métadonnées et le contenu 
-    des e-mails à résumer, tout en intégrant les instructions spécifiques éventuelles.
-    
-    Args:
-        emails (List[MailObject]): La liste des e-mails (récupérés via IMAP) à synthétiser.
-        user_instruction (Optional[str]): Une instruction spécifique dictée par le 
-                                          chef d'établissement (ex: "Fais un point 
-                                          uniquement sur les urgences RH").
-                                          
-    Returns:
-        str: Le prompt texte complet, formaté pour être injecté dans la requête au modèle.
+    des e-mails à résumer.
     """
-    pass
+    prompt = ""
+    
+    # 1. Ajout de la consigne spécifique si elle existe
+    if user_instruction and user_instruction.strip():
+        prompt += f"ATTENTION - INSTRUCTION SPÉCIFIQUE DU CHEF D'ÉTABLISSEMENT : {user_instruction}\n"
+        prompt += "Filtre et résume les e-mails ci-dessous UNIQUEMENT en fonction de cette instruction.\n\n"
+    else:
+        prompt += "Voici la liste des nouveaux e-mails à résumer :\n\n"
+
+    # 2. Injection du contenu des e-mails
+    for i, mail in enumerate(emails, 1):
+        date_str = mail.date_reception.strftime("%d/%m/%Y à %H:%M")
+        pj_str = f" [Pièces jointes : {', '.join(mail.pieces_jointes)}]" if mail.pieces_jointes else ""
+        
+        prompt += f"--- E-MAIL {i} ---\n"
+        prompt += f"De : {mail.expediteur}\n"
+        prompt += f"Date : {date_str}\n"
+        prompt += f"Objet : {mail.sujet}{pj_str}\n"
+        # On limite le contenu brut s'il est démesurément long (ex: > 3000 caractères)
+        # pour ne pas noyer l'agent, bien que Flash gère de grands contextes.
+        contenu = mail.contenu_texte[:3000] + ("..." if len(mail.contenu_texte) > 3000 else "")
+        prompt += f"Contenu :\n{contenu}\n"
+        prompt += "-" * 20 + "\n\n"
+
+    return prompt
 
 
 ============================================================
@@ -927,7 +1059,7 @@ def build_briefing_prompt(emails: List[MailObject], user_instruction: Optional[s
 from typing import List, Optional
 from datetime import datetime
 
-from src.core.models import MailObject
+from src.core import MailObject
 
 def get_main_courante_system_prompt() -> str:
     """
@@ -1085,6 +1217,15 @@ RÈGLES DE COMPORTEMENT STRICTES :
 4. RAISONNEMENT ET CLARIFICATION : Si l'utilisateur te donne un ordre (ex: "Mets un rendez-vous avec le maire demain") mais qu'il manque un paramètre essentiel pour utiliser ton outil (ex: l'heure exacte), NE DEVINE JAMAIS. Pose une question courte et directe à l'utilisateur pour obtenir l'information manquante avant d'agir.
 5. CONTEXTE ET MÉMOIRE : Appuie-toi sur l'historique récent de la conversation pour comprendre les sous-entendus.
 6. GESTION DES ÉCHECS : Si un outil technique échoue ou si tu n'as pas accès à une information, excuse-toi poliment, explique brièvement le problème et propose éventuellement une alternative. N'invente jamais d'informations (zéro hallucination).
+
+HONNÊTETÉ SUR TES CAPACITÉS (PAS DE FAUSSES PROMESSES) :
+- Tu ne fonctionnes qu'en réaction immédiate aux messages de l'utilisateur. Tu n'as PAS la capacité de programmer des tâches en arrière-plan, de mettre un rappel interne, ou de "réessayer plus tard" tout seul.
+- Par conséquent, si un outil échoue à cause d'un problème technique, dis-le clairement, mais ne propose JAMAIS de réessayer plus tard par toi-même. Demande plutôt à l'utilisateur de te relancer plus tard s'il le souhaite ou d'aller consulter les logs si l'erreur persiste.
+
+FORMATAGE STRICT (HTML TELEGRAM) : 
+- Tu dois IMPÉRATIVEMENT utiliser les balises HTML compatibles Telegram pour formater ton texte : <b>pour le gras</b>, <i>pour l'italique</i>, <u>pour le souligné</u>.
+- N'utilise JAMAIS de Markdown (comme **gras**, *italique*, ou # Titre).
+- Pour faire des listes, utilise simplement un tiret (-) ou une puce (•) en début de ligne, sans balise HTML de liste.
 """
 
 def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[str]] = None) -> str:
@@ -1217,7 +1358,7 @@ def build_summary_prompt(changes_diff: str) -> str:
 --- FICHIER : src/prompts/triage_prompts.py ---
 ============================================================
 
-from src.core.models import MailObject
+from src.core import MailObject
 
 def get_triage_system_prompt() -> str:
     """
@@ -1338,10 +1479,8 @@ from chromadb import Documents, EmbeddingFunction, Embeddings
 from google import genai
 from google.genai import types
 
-from src.core.models import MailObject
-from src.core.exceptions import ChromaDBError
-from src.core.config import get_settings
-from src.utils.logger import get_logger
+from src.core import MailObject, ChromaDBError, get_settings
+from src.utils import get_logger
 
 
 class CustomGeminiEmbeddingFunction(EmbeddingFunction):
@@ -1536,9 +1675,8 @@ from typing import Any
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from src.core.models import AgendaTaskRequest
-from src.utils.logger import get_logger
-from src.core.exceptions import GoogleAPIError
+from src.core import AgendaTaskRequest, GoogleAPIError
+from src.utils import get_logger
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
@@ -1669,8 +1807,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
-from src.utils.logger import get_logger
-from src.core.exceptions import GoogleAPIError
+from src.utils import get_logger
+from src.core import GoogleAPIError
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
@@ -1883,7 +2021,11 @@ from typing import List, Optional
 from src.core.models import MailObject, TriDecision
 from src.core.exceptions import IMAPError
 from src.core.config import get_settings
-from src.utils.logger import get_logger
+from src.utils import get_logger
+
+from email.message import EmailMessage
+import time
+
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
@@ -1974,54 +2116,9 @@ class IMAPService:
                 if status != 'OK':
                     continue
 
-                for response_part in msg_data:
-                    if isinstance(response_part, tuple):
-                        msg = email.message_from_bytes(response_part[1], policy=policy.default)
-                        
-                        sujet = str(msg.get('subject', '(Sans objet)'))
-                        expediteur = str(msg.get('from', '(Expéditeur inconnu)'))
-                        
-                        # Parsing robuste de la date
-                        date_tuple = email.utils.parsedate_tz(msg.get('date'))
-                        if date_tuple:
-                            timestamp = email.utils.mktime_tz(date_tuple)
-                            date_reception = datetime.fromtimestamp(timestamp)
-                        else:
-                            date_reception = datetime.now()
-
-                        # Extraction du contenu texte et des PJ
-                        contenu_texte = ""
-                        pieces_jointes = []
-                        
-                        if msg.is_multipart():
-                            for part in msg.walk():
-                                content_type = part.get_content_type()
-                                content_disposition = str(part.get("Content-Disposition"))
-                                
-                                if "attachment" in content_disposition:
-                                    filename = part.get_filename()
-                                    if filename:
-                                        pieces_jointes.append(filename)
-                                elif content_type == "text/plain" and "attachment" not in content_disposition:
-                                    try:
-                                        contenu_texte += part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
-                                    except Exception:
-                                        pass
-                        else:
-                            try:
-                                contenu_texte = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
-                            except Exception:
-                                contenu_texte = str(msg.get_payload())
-
-                        mail_obj = MailObject(
-                            id_mail=mail_id.decode('utf-8'),
-                            date_reception=date_reception,
-                            expediteur=expediteur,
-                            sujet=sujet,
-                            contenu_texte=contenu_texte.strip() or "(Contenu vide ou illisible)",
-                            pieces_jointes=pieces_jointes
-                        )
-                        emails_list.append(mail_obj)
+                mail_obj = self._parse_email_from_bytes(mail_id, msg_data)
+                if mail_obj:
+                    emails_list.append(mail_obj)
 
             logger.info(f"{len(emails_list)} e-mail(s) non lu(s) récupéré(s) et formaté(s).")
             return emails_list
@@ -2085,6 +2182,190 @@ class IMAPService:
         except Exception as e:
             logger.error(f"Erreur lors de l'ajout du tag à l'e-mail {mail_id} : {e}")
             return False
+
+
+    async def save_draft(self, destinataire: str, sujet: str, contenu_texte: str, dossier_brouillons: str = '"Drafts"') -> bool:
+        """
+        Point d'entrée asynchrone pour sauvegarder un message dans le dossier des brouillons.
+        """
+        return await asyncio.to_thread(self._save_draft_sync, destinataire, sujet, contenu_texte, dossier_brouillons)
+
+    def _save_draft_sync(self, destinataire: str, sujet: str, contenu_texte: str, dossier_brouillons: str) -> bool:
+        """
+        Logique synchrone IMAP (commande APPEND) pour injecter un brouillon.
+        """
+
+        if not self.mail:
+            logger.error("Création du brouillon impossible : IMAP non connecté.")
+            return False
+            
+        try:
+            logger.debug(f"Construction de l'objet e-mail pour {destinataire}...")
+            
+            # Utilisation de l'API moderne d'email de Python
+            msg = EmailMessage()
+            msg['Subject'] = sujet
+            msg['From'] = self.user
+            msg['To'] = destinataire
+            msg.set_content(contenu_texte)
+
+            # Génération de la date interne au format IMAP
+            date_imap = imaplib.Time2Internaldate(time.time())
+
+            # La commande APPEND pousse le message sur le serveur avec le drapeau \Draft
+            status, _ = self.mail.append(
+                dossier_brouillons,
+                '(\\Draft)',
+                date_imap,
+                msg.as_bytes()
+            )
+
+            if status == 'OK':
+                logger.info("Le brouillon a été poussé avec succès sur le serveur IMAP.")
+                return True
+            else:
+                logger.warning(f"Le serveur IMAP a refusé l'enregistrement du brouillon (Status: {status}).")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Erreur technique lors de la création du brouillon IMAP : {e}")
+            return False
+
+
+    async def fetch_all_unseen_emails(self, limit_per_folder: int = 20) -> List[MailObject]:
+        """
+        Point d'entrée asynchrone pour parcourir tous les dossiers IMAP et récupérer
+        les e-mails strictement non lus par l'humain (flag UNSEEN).
+        """
+        return await asyncio.to_thread(self._fetch_all_unseen_emails_sync, limit_per_folder)
+
+    def _fetch_all_unseen_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
+        """
+        Logique synchrone qui liste tous les dossiers, les sélectionne un par un,
+        et récupère les messages UNSEEN.
+        """
+        import re
+        import email
+        from email import policy
+        import email.utils
+        from datetime import datetime
+        
+        if not self.mail:
+            raise IMAPError("Service IMAP non connecté.")
+
+        logger.info("Récupération de la liste de tous les dossiers IMAP...")
+        emails_list = []
+        
+        try:
+            status, folders = self.mail.list()
+            if status != 'OK':
+                raise IMAPError("Impossible de lister les dossiers de la messagerie.")
+
+            for folder_data in folders:
+                folder_str = folder_data.decode('utf-8')
+                
+                # Extraction propre du nom du dossier (qui se trouve à la fin de la chaîne)
+                match = re.search(r'\"([^\"]+)\"$', folder_str)
+                if match:
+                    folder_name = f'"{match.group(1)}"'
+                else:
+                    folder_name = folder_str.split()[-1]
+
+                # On sélectionne le dossier en mode lecture seule
+                status, _ = self.mail.select(folder_name, readonly=True)
+                if status != 'OK':
+                    continue # On ignore les dossiers inaccessibles (ex: \Noselect)
+
+                # Recherche STRICTE des mails non lus par l'humain
+                status, messages = self.mail.uid('search', None, 'UNSEEN')
+                if status != 'OK' or not messages[0]:
+                    continue
+
+                mail_ids = messages[0].split()
+                # On limite le nombre pour ne pas saturer la mémoire si un dossier a 500 mails non lus
+                mail_ids = mail_ids[-limit_per_folder:] 
+                
+                for mail_id in mail_ids:
+                    # On utilise BODY.PEEK[] pour lire le mail SANS enlever le drapeau UNSEEN !
+                    status, msg_data = self.mail.uid('fetch', mail_id, '(BODY.PEEK[])')
+                    if status != 'OK':
+                        continue
+
+                    mail_obj = self._parse_email_from_bytes(mail_id, msg_data)
+                    if mail_obj:
+                        emails_list.append(mail_obj)
+
+            logger.info(f"{len(emails_list)} e-mail(s) UNSEEN trouvé(s) au total dans l'arborescence.")
+            return emails_list
+
+        except Exception as e:
+            logger.error(f"Erreur lors du scan global des e-mails non lus : {e}")
+            raise IMAPError(f"Erreur IMAP globale : {e}")
+
+
+    def _parse_email_from_bytes(self, mail_id: bytes, msg_data: list) -> Optional[MailObject]:
+        """
+        Méthode utilitaire privée pour extraire et formater un objet MailObject 
+        à partir des données brutes renvoyées par la commande IMAP fetch.
+        """
+        import email
+        from email import policy
+        import email.utils
+        from datetime import datetime
+        
+        for response_part in msg_data:
+            if isinstance(response_part, tuple):
+                msg = email.message_from_bytes(response_part[1], policy=policy.default)
+                
+                sujet = str(msg.get('subject', '(Sans objet)'))
+                expediteur = str(msg.get('from', '(Expéditeur inconnu)'))
+                
+                # Parsing robuste de la date
+                date_tuple = email.utils.parsedate_tz(msg.get('date'))
+                if date_tuple:
+                    timestamp = email.utils.mktime_tz(date_tuple)
+                    date_reception = datetime.fromtimestamp(timestamp)
+                else:
+                    date_reception = datetime.now()
+
+                # Extraction du contenu texte et des PJ
+                contenu_texte = ""
+                pieces_jointes = []
+                
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        content_disposition = str(part.get("Content-Disposition"))
+                        
+                        if "attachment" in content_disposition:
+                            filename = part.get_filename()
+                            if filename:
+                                pieces_jointes.append(filename)
+                        elif content_type == "text/plain" and "attachment" not in content_disposition:
+                            try:
+                                contenu_texte += part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
+                            except Exception:
+                                pass
+                else:
+                    try:
+                        contenu_texte = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
+                    except Exception:
+                        contenu_texte = str(msg.get_payload())
+
+                # Gestion sécurisée du décodage de l'ID IMAP
+                id_str = mail_id.decode('utf-8') if isinstance(mail_id, bytes) else str(mail_id)
+
+                return MailObject(
+                    id_mail=id_str,
+                    date_reception=date_reception,
+                    expediteur=expediteur,
+                    sujet=sujet,
+                    contenu_texte=contenu_texte.strip() or "(Contenu vide ou illisible)",
+                    pieces_jointes=pieces_jointes
+                )
+                
+        # Si la boucle se termine sans rien trouver
+        return None
 
 
 
@@ -2259,7 +2540,7 @@ from .google_calendar_tasks import GoogleCalendarTasksService
 
 from typing import Optional
 from datetime import datetime
-from src.utils.logger import get_logger
+from src.utils import get_logger
 
 # Initialisation du logger
 logger = get_logger(__name__)
@@ -2323,7 +2604,7 @@ def programmer_alerte(message_rappel: str, delai_minutes: int) -> bool:
 ============================================================
 
 from typing import Optional
-from src.utils.logger import get_logger
+from src.utils import get_logger
 
 # Initialisation du logger
 logger = get_logger(__name__)
@@ -2369,63 +2650,202 @@ def rechercher_document_drive(requete_recherche: str) -> str:
 ============================================================
 
 from typing import Optional
-from src.utils.logger import get_logger
+from src.utils import get_logger
+from src.core import get_imap_service, get_chroma_service
 
 # Initialisation du logger
 logger = get_logger(__name__)
 
-def rechercher_historique_emails(requete_semantique: str) -> str:
+async def rechercher_dans_les_emails(requete_semantique: str) -> str:
     """
-    Interroge la mémoire vectorielle locale (ChromaDB) de l'établissement pour retrouver 
-    le contenu d'anciens e-mails reçus ou envoyés.
+    Interroge la mémoire vectorielle de l'établissement pour retrouver une information 
+    précise dans la totalité des e-mails (récents ou anciens, lus ou non lus).
     
-    Utiliser cet outil lorsque l'utilisateur cherche une information contenue dans sa messagerie 
-    (ex: "Retrouve le mail de l'inspecteur concernant la réforme", "Quand est le prochain CESCE ?").
+    ATTENTION POUR L'ORCHESTRATEUR : Utilise cet outil dès que le chef d'établissement 
+    te demande de "retrouver", "chercher" ou te pose une question sur un fait passé 
+    ou une information contenue dans sa messagerie (ex: "Quelle est la date de la 
+    prochaine réunion de bassin ?", "Retrouve le mail de l'inspecteur sur la réforme").
+    Ne réponds jamais de mémoire, utilise toujours cet outil pour vérifier les faits.
+    Même lorsque le chef d'établissement ne te pas demande explicitement de rechercher 
+    dans ses e-mails, mais que tu manques de contexte pour réaliser une action (trouver la 
+    date d'un rendez-vous ou le nom d'un parent pour créer ensuite un événement d'agenda ou une tâche), 
+    si tu soupçonnes que tu peux trouver des informations dans les e-mails, utilise cet outil 
+    pour récupérer des informations pertinentes.
+    En revanche, quand le chef d'établissement te demande de résumer ou faire un point sur ses e-mails, 
+    c'est l'outil 'consulter_nouveaux_mails' qu'il faut utiliser, pas celui-ci. En effet, avec 'consulter_nouveaux_mails' 
+    tu pourras récupérer l'intégralité des e-mails non lus pour ensuite les résumer, 
+    alors que cet outil ne te donnera que des extraits pertinents relatifs à une question précise.
 
     Args:
-        requete_semantique (str): La question de l'utilisateur ou les concepts clés à rechercher, 
-                                  formulés en langage naturel.
+        requete_semantique (str): La question exacte de l'utilisateur ou les concepts 
+                                  clés à rechercher, formulés en langage naturel clair 
+                                  (ex: "date réunion chefs établissement bassin").
 
     Returns:
-        str: Le contexte textuel reconstitué à partir des e-mails les plus pertinents trouvés.
+        str: Le contexte textuel reconstitué à partir des e-mails les plus pertinents, 
+             ou un message clair si rien n'a été trouvé.
     """
-    pass
-
-def creer_brouillon_mail(destinataire: str, sujet: str, contexte_ou_instructions: str) -> bool:
-    """
-    Rédige un e-mail au format professionnel (ton institutionnel) et le sauvegarde directement 
-    dans le dossier "Brouillons" (Drafts) de la messagerie académique du chef d'établissement.
     
-    Utiliser cet outil lorsque l'utilisateur demande explicitement de préparer une réponse 
-    ou de rédiger un message à envoyer ultérieurement.
+    logger.info(f"Outil 'rechercher_dans_les_emails' appelé avec la requête : '{requete_semantique}'")
+
+    # Récupération de l'instance ChromaDB déjà initialisée depuis le registre
+    chroma_service = get_chroma_service()
+    
+    try:
+        # On demande les 5 e-mails les plus pertinents sémantiquement
+        resultats = await chroma_service.search_semantic(query=requete_semantique, n_results=5)
+        
+        if not resultats:
+            return "Aucun e-mail pertinent n'a été trouvé dans la base de données pour cette recherche."
+            
+        # Formatage des résultats pour que l'Orchestrateur (LLM) puisse les lire facilement
+        contexte_formate = "Voici les extraits d'e-mails trouvés dans la base de données :\n\n"
+        
+        for i, res in enumerate(resultats, 1):
+            meta = res.get('metadata', {})
+            date_reception = meta.get('date_reception', 'Date inconnue')
+            expediteur = meta.get('expediteur', 'Expéditeur inconnu')
+            sujet = meta.get('sujet', 'Sans objet')
+            texte = res.get('document', '')
+            
+            contexte_formate += f"--- E-MAIL {i} ---\n"
+            contexte_formate += f"Date : {date_reception}\n"
+            contexte_formate += f"De : {expediteur}\n"
+            contexte_formate += f"Sujet : {sujet}\n"
+            contexte_formate += f"Extrait du contenu : {texte}\n"
+            contexte_formate += "-" * 20 + "\n\n"
+            
+        return contexte_formate
+        
+    except Exception as e:
+        logger.error(f"Échec de la recherche vectorielle dans les e-mails : {e}")
+        return "Erreur technique : impossible d'accéder à la base de données des e-mails pour le moment."
+
+async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_message: str) -> bool:
+    """
+    Outil agissant comme un "bras robotique" pour injecter un e-mail dans le dossier 
+    "Brouillons" (Drafts) de la messagerie académique du chef d'établissement.
+    
+    ATTENTION POUR L'ORCHESTRATEUR : Tu dois D'ABORD rédiger toi-même la réponse 
+    complète avant d'appeler cet outil.
 
     Args:
-        destinataire (str): L'adresse e-mail ou le nom/fonction de la personne à qui s'adresse le message.
+        destinataire (str): L'adresse e-mail exacte du ou des destinataire(s).
         sujet (str): L'objet synthétique de l'e-mail.
-        contexte_ou_instructions (str): Les points clés à aborder, la directive de l'utilisateur, 
-                                        ou le contenu brut à formater.
+        corps_message (str): Le contenu complet du message.
 
     Returns:
-        bool: True si le brouillon a été créé et synchronisé sur le serveur IMAP avec succès, False sinon.
+        bool: True si le brouillon a été synchronisé sur le serveur avec succès, False sinon.
     """
-    pass
-
-def generer_briefing_emails(criteres: Optional[str] = None) -> str:
-    """
-    Analyse les e-mails récents de la boîte de réception (non lus ou marqués comme urgents) 
-    et génère un résumé structuré pour permettre une lecture rapide.
     
-    Utiliser cet outil lorsque l'utilisateur demande "Fais-moi un point sur mes mails", 
-    "Quoi de neuf ce matin ?" ou "Y a-t-il des urgences ?".
+    logger.info(f"Outil 'enregistrer_brouillon_mail' appelé pour le ou les destinataire(s) : {destinataire}")
+    
+    # Récupération de l'instance IMAP déjà connectée depuis le registre
+    imap_service = get_imap_service()
+    
+    try:
+        await imap_service.connect()
+        # Le nom du dossier Brouillons dépend souvent du serveur (Drafts ou Brouillons). 
+        # "Drafts" est le standard technique IMAP.
+        succes = await imap_service.save_draft(destinataire, sujet, corps_message, dossier_brouillons='"Drafts"')
+        return succes
+    except Exception as e:
+        logger.error(f"Échec de l'exécution de l'outil enregistrer_brouillon_mail : {e}")
+        return False
+    finally:
+        await imap_service.disconnect()
+
+async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
+    """
+    Se connecte en direct à la messagerie pour relever les e-mails récents ou non lus, 
+    et génère un résumé intelligent selon les instructions fournies.
+    
+    ATTENTION POUR L'ORCHESTRATEUR : Utilise cet outil lorsque le chef d'établissement 
+    te demande explicitement un "résumé", un "point sur ses mails", ou cherche à savoir 
+    s'il a reçu quelque chose de nouveau concernant un sujet précis (ex: "Ai-je des 
+    urgences ce matin ?", "Fais-moi un point des nouveaux mails uniquement sur le financier", "Y a-t-il des messages 
+    de la DEC ?").
 
     Args:
-        criteres (Optional[str]): Un filtre éventuel précisé par l'utilisateur (ex: "uniquement les urgences", 
-                                  "les mails des parents", "les messages du rectorat"). Par défaut, traite tous les non lus.
+        criteres (Optional[str]): Les instructions de filtrage dictées par l'utilisateur 
+                                  en langage naturel (ex: "uniquement les urgences", 
+                                  "les mails parlant de budget", "les messages des parents"). 
+                                  Si l'utilisateur demande juste un point général, laisse vide.
 
     Returns:
-        str: Le résumé formaté des e-mails, prêt à être affiché à l'utilisateur.
+        str: Le résumé structuré des e-mails correspondants généré par l'Agent de Briefing, 
+             ou un message indiquant qu'aucun nouveau mail ne correspond.
     """
-    pass
+    from src.agents.briefing_agent import BriefingAgent
+    from src.core.config import get_settings
+    
+    logger.info(f"Outil 'generer_briefing_emails' appelé avec les critères : '{criteres}'")    
+    imap_service = get_imap_service()
+    settings = get_settings()
+    
+    briefing_agent = BriefingAgent(
+        api_key=settings.GEMINI_API_KEY, 
+        model_name=settings.GEMINI_FLASH_MODEL
+    )
+    
+    try:
+        await imap_service.connect()
+        
+        # On utilise la nouvelle méthode qui scanne dynamiquement toute l'arborescence
+        tous_les_nouveaux_mails = await imap_service.fetch_all_unseen_emails(limit_per_folder=20)
+        
+        if not tous_les_nouveaux_mails:
+            return "La relève est terminée : vous n'avez aucun e-mail non lu dans l'ensemble de votre messagerie."
+            
+        logger.debug(f"{len(tous_les_nouveaux_mails)} e-mails non lus transmis à l'Agent de Briefing.")
+        
+        # Le BriefingAgent lit les mails, applique les critères, et génère le texte final.
+        resume = await briefing_agent.generate_briefing(
+            emails=tous_les_nouveaux_mails, 
+            user_instruction=criteres
+        )
+        
+        return resume
+        
+    except Exception as e:
+        logger.error(f"Échec de la génération du briefing des e-mails : {e}", exc_info=True)
+        return "Erreur technique : la relève de la totalité des dossiers a échoué. Le serveur IMAP est peut-être injoignable."
+    finally:
+        await imap_service.disconnect()
+
+
+============================================================
+--- FICHIER : src/tools/__init__.py ---
+============================================================
+
+"""
+Module des outils (tools / Function Calling)
+
+Ce module centralise l'ensemble des fonctions Python (les "bras robotiques") 
+mises à la disposition de l'Agent Orchestrateur. 
+Chaque outil est documenté via une docstring précise qui sert de "mode d'emploi" 
+pour l'IA.
+"""
+
+# --- Outils de Messagerie (IMAP / ChromaDB) ---
+from .mail_tools import (
+    rechercher_dans_les_emails,
+    enregistrer_brouillon_mail,
+    generer_briefing_emails
+)
+
+# --- Outils Google Drive ---
+from .drive_tools import (
+    ajouter_main_courante,
+    rechercher_document_drive
+)
+
+# --- Outils d'Agenda et de Planification (Google Calendar / Tasks) ---
+from .calendar_tools import (
+    creer_evenement_agenda,
+    creer_tache,
+    programmer_alerte
+)
 
 
 ============================================================
@@ -2564,34 +2984,46 @@ def truncate_text_for_llm(text: str, max_tokens: int) -> str:
     """
     pass
 
-def split_telegram_message(text: str, max_length: int = 4000) -> List[str]:
+
+def split_telegram_message(text: str, max_length: int = 4096) -> List[str]:
     """
-    Découpe un texte long (ex: Briefing ou Synthèse nocturne) en une liste de 
-    messages plus courts pour respecter la limite stricte de l'API Telegram 
-    (4096 caractères). Tente de couper proprement sur les sauts de ligne.
+    Découpe un texte trop long en plusieurs morceaux pour respecter 
+    la limite de caractères de l'API Telegram.
+    
+    Tente de couper intelligemment sur les sauts de ligne pour éviter 
+    de casser des phrases ou le formatage Markdown (gras, listes).
 
     Args:
-        text (str): Le texte intégral à envoyer.
-        max_length (int): La limite de caractères par morceau (4000 par sécurité).
+        text (str): Le texte généré par l'IA à envoyer.
+        max_length (int): La limite maximale de Telegram (4096).
 
     Returns:
-        List[str]: Une liste de sous-chaînes prêtes à être envoyées séquentiellement.
+        List[str]: Une liste contenant les différents morceaux du message.
     """
-    pass
-
-def escape_telegram_markdown(text: str) -> str:
-    """
-    Échappe les caractères spéciaux requis par le parseur 'MarkdownV2' de l'API Telegram 
-    (ex: -, ., !, (, )) pour éviter que l'envoi du message ne crashe.
-    Cette fonction préserve le formatage généré par le LLM (gras, italique, listes).
-
-    Args:
-        text (str): Le texte Markdown généré par l'IA.
-
-    Returns:
-        str: Le texte formaté et sécurisé pour l'envoi via le TelegramBotService.
-    """
-    pass
+    if not text:
+        return []
+        
+    chunks = []
+    
+    while len(text) > max_length:
+        # On cherche le dernier saut de ligne présent AVANT la limite des 4096 caractères
+        split_index = text.rfind('\n', 0, max_length)
+        
+        # Si on ne trouve aucun saut de ligne (texte très compact), on coupe de force à la limite
+        if split_index == -1:
+            split_index = max_length
+            
+        # On ajoute le morceau à la liste
+        chunks.append(text[:split_index])
+        
+        # On met à jour le texte restant en enlevant les espaces/retours à la ligne résiduels au début
+        text = text[split_index:].lstrip()
+        
+    # S'il reste du texte à la fin de la boucle, on l'ajoute
+    if text:
+        chunks.append(text)
+        
+    return chunks
 
 
 ============================================================
@@ -2608,8 +3040,7 @@ from .text_utils import (
     extract_email_address,
     estimate_token_count,
     truncate_text_for_llm,
-    split_telegram_message,
-    escape_telegram_markdown
+    split_telegram_message
 )
 
 
@@ -2622,13 +3053,10 @@ from datetime import datetime
 from typing import List, Optional
 import html
 
-from src.core.models import MailObject, TriDecision
-from src.services.imap_service import IMAPService
-from src.services.chroma_service import ChromaDBService
-from src.services.telegram_bot import TelegramBotService
-from src.agents.triage_agent import TriageAgent
-from src.utils.logger import get_logger
-from src.core.config import get_settings
+from src.core import MailObject, TriDecision, get_settings
+from src.services import IMAPService, ChromaDBService, TelegramBotService
+from src.agents import TriageAgent
+from src.utils import get_logger
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
@@ -2746,12 +3174,13 @@ from pathlib import Path
 from typing import Optional
 from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.constants import ParseMode
 
-from src.utils.logger import get_logger
-from src.agents.orchestrator_agent import OrchestratorAgent
-from src.services.telegram_bot import TelegramBotService
-from src.core.models import ChatHistory, ConversationTurn
-from src.utils.text_utils import split_telegram_message
+from src.utils import get_logger
+from src.agents import OrchestratorAgent
+from src.services import TelegramBotService
+from src.core import ChatHistory, ConversationTurn
+from src.utils import split_telegram_message
 
 # Initialisation du logger
 logger = get_logger(__name__)
@@ -2828,12 +3257,18 @@ class PipelineBTelegram:
         if update.message.text:
             user_text = update.message.text
         elif update.message.voice or update.message.audio:
-            # TODO : Télécharger le fichier audio/vocal via l'API Telegram en byte array.
-            # TODO : Utiliser le SDK google-genai pour uploader l'audio (ou le passer en Base64/Inline) 
-            # et générer la transcription textuelle de la requête du Perdir.
-            logger.info("Message vocal reçu. Transcription différée en attente d'implémentation.")
-            await update.message.reply_text("🗣️ Mémo vocal bien reçu ! La transcription automatique via Gemini arrivera dans une prochaine mise à jour.")
-            return
+            # Notification pour faire patienter l'utilisateur pendant l'écoute
+            await update.message.reply_text("<i>🎤 J'écoute votre message vocal...</i>", parse_mode=ParseMode.HTML)
+            
+            try:
+                # Appel de notre nouvelle méthode en RAM
+                user_text = await self._transcribe_audio(update)
+                # Affichage de la transcription pour validation visuelle
+                #await update.message.reply_text(f"<i>📝 Transcription : \"{user_text}\"</i>", parse_mode=ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Échec de la transcription audio : {e}")
+                await update.message.reply_text("⚠️ Désolé, je n'ai pas réussi à analyser ce message vocal.")
+                return
         else:
             logger.warning("Format de message non supporté.")
             await update.message.reply_text("Désolé, je ne peux traiter que du texte ou des mémos vocaux.")
@@ -2867,11 +3302,53 @@ class PipelineBTelegram:
             # Utilisation de text_utils pour éviter de crasher sur la limite de caractères Telegram (4096)
             response_chunks = split_telegram_message(ai_response)
             for chunk in response_chunks:
-                await update.message.reply_text(chunk)
+                await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
                 
         except Exception as e:
             logger.error(f"Erreur critique lors du traitement du message par l'Orchestrateur : {e}", exc_info=True)
             await update.message.reply_text("⚠️ Désolé, une erreur technique m'a empêché de traiter votre demande. Veuillez réessayer.")
+
+    async def _transcribe_audio(self, update: Update) -> str:
+        """
+        Télécharge le message vocal Telegram en mémoire et utilise Gemini Flash 
+        pour le transcrire en texte.
+        """
+        from google import genai
+        from google.genai import types
+        from src.core.config import get_settings
+        
+        # 1. Récupération des métadonnées du fichier audio/vocal
+        audio_attachment = update.message.voice or update.message.audio
+        telegram_file = await update.get_bot().get_file(audio_attachment.file_id)
+        
+        # 2. Téléchargement en mémoire vive (bytes)
+        # Cela évite les I/O inutiles sur le disque du Raspberry Pi
+        audio_bytes = await telegram_file.download_as_bytearray()
+        
+        # 3. Préparation du client Gemini
+        settings = get_settings()
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        
+        # 4. Création de l'objet "Part" pour l'API
+        # Les notes vocales Telegram sont généralement au format OGG (audio/ogg)
+        audio_part = types.Part.from_bytes(
+            data=bytes(audio_bytes),
+            mime_type=audio_attachment.mime_type or 'audio/ogg'
+        )
+        
+        # 5. Appel asynchrone à Gemini Flash
+        prompt = "Transcris ce message vocal avec une précision absolue. Ne rajoute absolument aucun commentaire, renvoie UNIQUEMENT le texte prononcé."
+        
+        # On utilise le modèle FLASH configuré dans vos settings
+        response = await client.aio.models.generate_content(
+            model=settings.GEMINI_FLASH_MODEL, 
+            contents=[audio_part, prompt],
+            config=types.GenerateContentConfig(
+                temperature=0.0 # Température à 0 pour éviter la moindre hallucination ou invention de texte
+            )
+        )
+        
+        return response.text.strip()
 
 
 ============================================================
@@ -2881,11 +3358,9 @@ class PipelineBTelegram:
 from typing import List, Optional
 from datetime import datetime
 
-from src.services.google_drive_api import GoogleDriveService
-from src.services.telegram_bot import TelegramBotService
-from src.services.imap_service import IMAPService
-from src.agents.synth_agent import SynthAgent
-from src.core.models import MailObject
+from src.services import GoogleDriveService, TelegramBotService, IMAPService
+from src.agents import SynthAgent
+from src.core import MailObject
 
 
 class PipelineCSynthesis:

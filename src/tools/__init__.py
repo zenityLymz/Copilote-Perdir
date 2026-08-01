@@ -17,7 +17,7 @@ from .mail_tools import (
 # --- Outils Google Drive ---
 from .drive_tools import (
     ajouter_main_courante,
-    rechercher_document_drive
+    rechercher_info_drive
 )
 
 # --- Outils d'Agenda et de Planification (Google Calendar / Tasks) ---

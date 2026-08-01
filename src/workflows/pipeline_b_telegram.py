@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.constants import ParseMode
 
 from src.utils import get_logger
 from src.agents import OrchestratorAgent
@@ -85,12 +86,18 @@ class PipelineBTelegram:
         if update.message.text:
             user_text = update.message.text
         elif update.message.voice or update.message.audio:
-            # TODO : Télécharger le fichier audio/vocal via l'API Telegram en byte array.
-            # TODO : Utiliser le SDK google-genai pour uploader l'audio (ou le passer en Base64/Inline) 
-            # et générer la transcription textuelle de la requête du Perdir.
-            logger.info("Message vocal reçu. Transcription différée en attente d'implémentation.")
-            await update.message.reply_text("🗣️ Mémo vocal bien reçu ! La transcription automatique via Gemini arrivera dans une prochaine mise à jour.")
-            return
+            # Notification pour faire patienter l'utilisateur pendant l'écoute
+            await update.message.reply_text("<i>🎤 J'écoute votre message vocal...</i>", parse_mode=ParseMode.HTML)
+            
+            try:
+                # Appel de notre nouvelle méthode en RAM
+                user_text = await self._transcribe_audio(update)
+                # Affichage de la transcription pour validation visuelle
+                #await update.message.reply_text(f"<i>📝 Transcription : \"{user_text}\"</i>", parse_mode=ParseMode.HTML)
+            except Exception as e:
+                logger.error(f"Échec de la transcription audio : {e}")
+                await update.message.reply_text("⚠️ Désolé, je n'ai pas réussi à analyser ce message vocal.")
+                return
         else:
             logger.warning("Format de message non supporté.")
             await update.message.reply_text("Désolé, je ne peux traiter que du texte ou des mémos vocaux.")
@@ -124,8 +131,50 @@ class PipelineBTelegram:
             # Utilisation de text_utils pour éviter de crasher sur la limite de caractères Telegram (4096)
             response_chunks = split_telegram_message(ai_response)
             for chunk in response_chunks:
-                await update.message.reply_text(chunk)
+                await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
                 
         except Exception as e:
             logger.error(f"Erreur critique lors du traitement du message par l'Orchestrateur : {e}", exc_info=True)
             await update.message.reply_text("⚠️ Désolé, une erreur technique m'a empêché de traiter votre demande. Veuillez réessayer.")
+
+    async def _transcribe_audio(self, update: Update) -> str:
+        """
+        Télécharge le message vocal Telegram en mémoire et utilise Gemini Flash 
+        pour le transcrire en texte.
+        """
+        from google import genai
+        from google.genai import types
+        from src.core.config import get_settings
+        
+        # 1. Récupération des métadonnées du fichier audio/vocal
+        audio_attachment = update.message.voice or update.message.audio
+        telegram_file = await update.get_bot().get_file(audio_attachment.file_id)
+        
+        # 2. Téléchargement en mémoire vive (bytes)
+        # Cela évite les I/O inutiles sur le disque du Raspberry Pi
+        audio_bytes = await telegram_file.download_as_bytearray()
+        
+        # 3. Préparation du client Gemini
+        settings = get_settings()
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        
+        # 4. Création de l'objet "Part" pour l'API
+        # Les notes vocales Telegram sont généralement au format OGG (audio/ogg)
+        audio_part = types.Part.from_bytes(
+            data=bytes(audio_bytes),
+            mime_type=audio_attachment.mime_type or 'audio/ogg'
+        )
+        
+        # 5. Appel asynchrone à Gemini Flash
+        prompt = "Transcris ce message vocal avec une précision absolue. Ne rajoute absolument aucun commentaire, renvoie UNIQUEMENT le texte prononcé."
+        
+        # On utilise le modèle FLASH configuré dans vos settings
+        response = await client.aio.models.generate_content(
+            model=settings.GEMINI_FLASH_MODEL, 
+            contents=[audio_part, prompt],
+            config=types.GenerateContentConfig(
+                temperature=0.0 # Température à 0 pour éviter la moindre hallucination ou invention de texte
+            )
+        )
+        
+        return response.text.strip()

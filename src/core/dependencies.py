@@ -6,18 +6,21 @@ nécessitant une connexion persistante (IMAP, Base de données, API Google).
 Cela évite de recréer et reconnecter les services à chaque appel d'outil,
 garantissant ainsi des performances optimales et le respect des limites des serveurs.
 """
+from __future__ import annotations
+from typing import Optional, TYPE_CHECKING
 
-from typing import Optional
+# TYPE_CHECKING est Vrai pour l'éditeur de code (VS Code), 
+# mais Faux quand le programme s'exécute, ce qui évite l'import circulaire !
+if TYPE_CHECKING:
+    from src.services.imap_service import IMAPService
+    from src.services.chroma_service import ChromaDBService
+    from src.services.google_drive_api import GoogleDriveService
 
-# Typage pour l'autocomplétion (nous importerons les vraies classes au moment de l'utilisation)
-from src.services.imap_service import IMAPService
-from src.services.chroma_service import ChromaDBService
-from src.services.google_drive_api import GoogleDriveService
-
-# Stockage global des instances
-_imap_service: Optional[IMAPService] = None
-_chroma_service: Optional[ChromaDBService] = None
-_drive_service: Optional[GoogleDriveService] = None
+# L'astuce est de mettre le nom du type entre guillemets ('IMAPService') 
+# car la classe n'est pas "réellement" importée à l'exécution.
+_imap_service: Optional['IMAPService'] = None
+_chroma_service: Optional['ChromaDBService'] = None
+_drive_service: Optional['GoogleDriveService'] = None
 
 # --- Service IMAP ---
 def get_imap_service() -> IMAPService:
