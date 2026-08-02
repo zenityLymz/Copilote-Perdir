@@ -15,11 +15,12 @@ from src.prompts.orchestrator_prompts import (
 
 # Importation de tous les outils (Function Calling) mis à disposition de l'IA
 from src.tools import (
-    creer_evenement_agenda, 
-    creer_tache, 
+    gerer_agenda, 
+    gerer_taches,
     programmer_alerte, 
-    ajouter_main_courante, 
-    rechercher_document_drive, 
+    preparer_brouillon_main_courante,
+    sauvegarder_main_courante_validee,
+    rechercher_info_drive, 
     rechercher_dans_les_emails, 
     enregistrer_brouillon_mail, 
     generer_briefing_emails
@@ -64,11 +65,12 @@ class OrchestratorAgent:
             List[Callable]: Les références aux fonctions utilisables via le Function Calling.
         """
         return [
-            creer_evenement_agenda,
-            creer_tache,
+            gerer_agenda,
+            gerer_taches,
             programmer_alerte,
-            ajouter_main_courante,
-            rechercher_document_drive,
+            preparer_brouillon_main_courante,
+            sauvegarder_main_courante_validee,
+            rechercher_info_drive,
             rechercher_dans_les_emails,
             enregistrer_brouillon_mail,
             generer_briefing_emails

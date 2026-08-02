@@ -10,7 +10,7 @@ async def rechercher_dans_les_emails(requete_semantique: str) -> str:
     Interroge la mémoire vectorielle de l'établissement pour retrouver une information 
     précise dans la totalité des e-mails (récents ou anciens, lus ou non lus).
     
-    ATTENTION POUR L'ORCHESTRATEUR : Utilise cet outil dès que le chef d'établissement 
+    ATTENTION POUR LE COPILOTE : Utilise cet outil dès que le chef d'établissement 
     te demande de "retrouver", "chercher" ou te pose une question sur un fait passé 
     ou une information contenue dans sa messagerie (ex: "Quelle est la date de la 
     prochaine réunion de bassin ?", "Retrouve le mail de l'inspecteur sur la réforme").
@@ -21,9 +21,7 @@ async def rechercher_dans_les_emails(requete_semantique: str) -> str:
     si tu soupçonnes que tu peux trouver des informations dans les e-mails, utilise cet outil 
     pour récupérer des informations pertinentes.
     En revanche, quand le chef d'établissement te demande de résumer ou faire un point sur ses e-mails, 
-    c'est l'outil 'consulter_nouveaux_mails' qu'il faut utiliser, pas celui-ci. En effet, avec 'consulter_nouveaux_mails' 
-    tu pourras récupérer l'intégralité des e-mails non lus pour ensuite les résumer, 
-    alors que cet outil ne te donnera que des extraits pertinents relatifs à une question précise.
+    c'est l'outil 'generer_briefing_emails' qu'il faut utiliser, pas celui-ci.
 
     Args:
         requete_semantique (str): La question exacte de l'utilisateur ou les concepts 
@@ -75,7 +73,7 @@ async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_messag
     Outil agissant comme un "bras robotique" pour injecter un e-mail dans le dossier 
     "Brouillons" (Drafts) de la messagerie académique du chef d'établissement.
     
-    ATTENTION POUR L'ORCHESTRATEUR : Tu dois D'ABORD rédiger toi-même la réponse 
+    ATTENTION POUR LE COPILOTE : Tu dois D'ABORD rédiger toi-même la réponse 
     complète avant d'appeler cet outil.
 
     Args:
@@ -109,7 +107,7 @@ async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
     Se connecte en direct à la messagerie pour relever les e-mails récents ou non lus, 
     et génère un résumé intelligent selon les instructions fournies.
     
-    ATTENTION POUR L'ORCHESTRATEUR : Utilise cet outil lorsque le chef d'établissement 
+    ATTENTION POUR LE COPILOTE : Utilise cet outil lorsque le chef d'établissement 
     te demande explicitement un "résumé", un "point sur ses mails", ou cherche à savoir 
     s'il a reçu quelque chose de nouveau concernant un sujet précis (ex: "Ai-je des 
     urgences ce matin ?", "Fais-moi un point des nouveaux mails uniquement sur le financier", "Y a-t-il des messages 

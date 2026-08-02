@@ -16,13 +16,14 @@ from .mail_tools import (
 
 # --- Outils Google Drive ---
 from .drive_tools import (
-    ajouter_main_courante,
+    preparer_brouillon_main_courante,
+    sauvegarder_main_courante_validee,
     rechercher_info_drive
 )
 
 # --- Outils d'Agenda et de Planification (Google Calendar / Tasks) ---
 from .calendar_tools import (
-    creer_evenement_agenda,
-    creer_tache,
+    gerer_agenda,
+    gerer_taches,
     programmer_alerte
 )

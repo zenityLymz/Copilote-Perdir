@@ -33,6 +33,7 @@ class GoogleDriveService:
         self.token_path = token_path
         self.scopes = [
             'https://www.googleapis.com/auth/drive',
+            'https://www.googleapis.com/auth/calendar',
             'https://www.googleapis.com/auth/tasks'
         ]
         self.service = None
@@ -207,3 +208,67 @@ class GoogleDriveService:
         except Exception as e:
             logger.error(f"Erreur lors de la mise à jour du fichier {file_id} : {e}")
             raise GoogleAPIError(f"Mise à jour Drive échouée : {e}")
+
+
+
+    async def search_files_by_content(self, query_string: str, limit: int = 3) -> List[Dict[str, Any]]:
+        """
+        Recherche plein texte dans le Drive. Retourne l'ID, le nom, le type et le lien d'accès.
+        """
+        return await asyncio.to_thread(self._search_files_by_content_sync, query_string, limit)
+
+    def _search_files_by_content_sync(self, query_string: str, limit: int) -> List[Dict[str, Any]]:
+        if not self.service:
+            raise GoogleAPIError("Service Drive non authentifié.")
+        
+        # Opérateur 'fullText contains' pour chercher dans le contenu des documents
+        query = f"fullText contains '{query_string}' and trashed = false"
+        logger.debug(f"Recherche plein texte Drive : {query}")
+        
+        try:
+            results = self.service.files().list(
+                q=query,
+                pageSize=limit,
+                # On demande explicitement webViewLink pour que le Perdir puisse cliquer dessus
+                fields="nextPageToken, files(id, name, mimeType, webViewLink)",
+                orderBy="modifiedTime desc" 
+            ).execute()
+            
+            return results.get('files', [])
+        except Exception as e:
+            logger.error(f"Erreur lors de la recherche plein texte Drive : {e}")
+            raise GoogleAPIError(f"Recherche plein texte échouée : {e}")
+
+    async def get_file_text_content(self, file_id: str, mime_type: str) -> str:
+        """
+        Exporte (Google Docs) ou télécharge (Fichiers bruts) le contenu au format texte.
+        """
+        async with self._lock:
+            return await asyncio.to_thread(self._get_file_text_content_sync, file_id, mime_type)
+
+    def _get_file_text_content_sync(self, file_id: str, mime_type: str) -> str:
+        if not self.service:
+            raise GoogleAPIError("Service Drive non authentifié.")
+        
+        try:
+            # Traitement spécifique selon la nature du fichier
+            if 'application/vnd.google-apps.document' in mime_type:
+                request = self.service.files().export_media(fileId=file_id, mimeType='text/plain')
+            elif 'text/plain' in mime_type or 'text/markdown' in mime_type:
+                request = self.service.files().get_media(fileId=file_id)
+            else:
+                raise ValueError(f"Type de fichier non supporté pour l'extraction : {mime_type}")
+
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+            
+            return fh.getvalue().decode('utf-8')
+        except ValueError as ve:
+            raise ve
+        except Exception as e:
+            logger.error(f"Erreur d'extraction de texte pour {file_id} : {e}")
+            raise GoogleAPIError(f"Extraction de texte échouée : {e}")
