@@ -26,15 +26,15 @@ class SynthAgent:
         """
         pass
 
-    async def rewrite_pilotage_content(self, current_markdown: str, daily_info: str) -> Optional[str]:
+    async def rewrite_memoire_etablissement_content(self, current_markdown: str, daily_info: str) -> Optional[str]:
         """
-        Applique la mécanique "Read-Rewrite-Replace" pour le Fichier Pilotage.
-        Évalue l'impact des nouvelles informations de la journée (mails + tampon Telegram), 
+        Applique la mécanique "Read-Rewrite-Replace" pour le Fichier Mémoire Etablissement.
+        Évalue l'impact des nouvelles informations de la journée (mails, chat Telegram), 
         fusionne intelligemment les données dans les rubriques concernées du Markdown 
         sans altérer sa structure.
 
         Args:
-            current_markdown (str): Le contenu intégral actuel du fichier de pilotage.
+            current_markdown (str): Le contenu intégral actuel du fichier de mémoire établissement.
             daily_info (str): Le texte consolidé contenant tous les événements et notes de la journée.
 
         Returns:
@@ -46,13 +46,13 @@ class SynthAgent:
     async def generate_update_summary(self, old_markdown: str, new_markdown: str) -> str:
         """
         Génère un résumé des modifications apportées (ajouts, suppressions) au fichier 
-        Pilotage, destiné à être envoyé au Perdir via Telegram.
+        Mémoire Etablissement, destiné à être envoyé au Perdir via Telegram.
         
         Args:
             old_markdown (str): L'ancienne version du fichier.
             new_markdown (str): La nouvelle version du fichier.
             
         Returns:
-            str: Un résumé concis des changements.
+            str: Un résumé concis des changements qui précise les rubriques impactées et l'ampleur des modifications.
         """
         pass

@@ -354,6 +354,7 @@ from google.genai import types
 from src.core.models import ChatHistory
 from src.core.config import get_settings
 from src.core.exceptions import AgentError
+from src.core.dependencies import get_drive_service
 from src.utils.logger import get_logger
 
 # Importation des constructeurs de prompts
@@ -448,6 +449,25 @@ class OrchestratorAgent:
             )
         return formatted_history
 
+    # Téléchargement asynchrone de la mémoire de l'établissement depuis le Drive pour enrichir le prompt
+    async def _fetch_memoire_etablissement(self) -> Optional[str]:
+        """
+        Récupère le contenu du document Mémoire de l'Établissement depuis le Drive.
+        Gère les erreurs silencieusement pour ne pas bloquer l'Orchestrateur.
+        """
+        try:
+            settings = get_settings()
+            drive_service = get_drive_service()
+            file_id = settings.MEMOIRE_FILE_ID
+            
+            logger.debug("Téléchargement de la mémoire de l'établissement depuis Google Drive...")
+            content = await drive_service.download_file_content(file_id)
+            return content
+        except Exception as e:
+            # Dégradation gracieuse : On loggue l'erreur mais on ne crashe pas
+            logger.warning(f"Impossible de récupérer la mémoire de l'établissement (Drive injoignable ?) : {e}")
+            return None
+
     async def process_user_request(self, user_message: str, chat_history: ChatHistory) -> str:
         """
         Traite une nouvelle demande du chef d'établissement.
@@ -464,13 +484,20 @@ class OrchestratorAgent:
         logger.info("Début du cycle de raisonnement de l'Orchestrateur (Agentic Loop).")
         
         try:
-            # 1. Préparation du contexte et des prompts
+            # 1. Téléchargement à la volée de la mémoire (Annuaire, Règles)
+            memoire_content = await self._fetch_memoire_etablissement()
+
+            # 2. Préparation du contexte et des prompts
             system_prompt = get_orchestrator_system_prompt()
-            # Injection dynamique de la date, heure, et alertes éventuelles
-            enriched_user_prompt = build_orchestrator_prompt(user_message=user_message)
+            
+            # Injection dynamique de la date, heure, mémoire, et alertes éventuelles (vide pour l'instant)
+            enriched_user_prompt = build_orchestrator_prompt(
+                user_message=user_message,
+                memoire_etablissement=memoire_content
+            )
             formatted_history = self._format_chat_history(chat_history)
 
-            # 2. Création de la session de chat asynchrone avec les outils injectés
+            # 3. Création de la session de chat asynchrone avec les outils injectés
             chat = self.client.aio.chats.create(
                 model=self.model_name,
                 history=formatted_history,
@@ -481,7 +508,7 @@ class OrchestratorAgent:
                 )
             )
 
-            # 3. Envoi du message. 
+            # 4. Envoi du message.
             # Le SDK google-genai gère automatiquement l'exécution des fonctions Python (Function Calling)
             # si l'IA décide de les appeler, puis il renvoie la réponse finale synthétisée.
             response = await chat.send_message(enriched_user_prompt)
@@ -733,6 +760,9 @@ class Settings(BaseSettings):
 
     # --- Temps de pause entre les appels à l'API Gemini pour éviter le throttling ---
     GEMINI_API_PAUSE_SECONDS: float = 10.0
+
+    # --- Nombre de jours de mémoire à conserver pour le contexte conversationnel ---
+    CHAT_HISTORY_DAYS: int = 7
 
     # Comportement de Pydantic pour lire le fichier .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -1017,6 +1047,14 @@ class ConversationTurn(BaseModel):
         ..., 
         description="Le contenu textuel du message."
     )
+    timestamp: datetime = Field(
+        default_factory=datetime.now, 
+        description="Horodatage exact du message"
+    )
+    est_synthetise: bool = Field(
+        default=False, 
+        description="Indique si le message a déjà été traité par la synthèse de la mémoire de l'établissement."
+    )
 
 class ChatHistory(BaseModel):
     """
@@ -1093,6 +1131,7 @@ from .exceptions import (
 
 from typing import List, Optional
 from src.core import MailObject
+from src.utils import truncate_text_for_llm
 
 def get_briefing_system_prompt() -> str:
     """
@@ -1138,9 +1177,11 @@ def build_briefing_prompt(emails: List[MailObject], user_instruction: Optional[s
         prompt += f"De : {mail.expediteur}\n"
         prompt += f"Date : {date_str}\n"
         prompt += f"Objet : {mail.sujet}{pj_str}\n"
-        # On limite le contenu brut s'il est démesurément long (ex: > 3000 caractères)
-        # pour ne pas noyer l'agent, bien que Flash gère de grands contextes.
-        contenu = mail.contenu_texte[:3000] + ("..." if len(mail.contenu_texte) > 3000 else "")
+        
+        # On limite le contenu brut s'il est démesurément long pour ne pas noyer l'agent.
+        # Utilisation de la troncature intelligente pour ne pas casser le sens des phrases.
+        contenu = truncate_text_for_llm(mail.contenu_texte, max_tokens=1000)
+        
         prompt += f"Contenu :\n{contenu}\n"
         prompt += "-" * 20 + "\n\n"
 
@@ -1314,7 +1355,7 @@ A. PLANIFICATION ET AGENDA :
 - Minuteur (`programmer_alerte`) : UNIQUEMENT pour les rappels à très court terme, dans la journée("A 14h, rappelle-moi de faire...", "Mets-moi un rappel dans 1h concernant...").
 
 B. GESTION DES E-MAILS :
-- `generer_briefing_emails` : Utilise cet outil pour faire un point global ou un résumé des messages récents/non lus (ex: "Fais-moi un point sur mes mails", "Quoi de neuf ce matin ?").
+- `generer_briefing_emails` : Utilise cet outil pour faire un point global ou un résumé des messages récents/non lus (ex: "Fais-moi un point sur mes mails", "Quoi de neuf ce matin ?"). Par défaut, limite-toi à 50 e-mails pour que l'exécution soit rapide. Mais si le chef d'établissement te demande explicitement un résumé exhaustif, de remonter plus loin, ou précise "TOUS mes mails", tu dois augmenter le paramètre `limite` selon ce qu'il indique ou ce que tu estimes nécessaire.
 - `rechercher_dans_les_emails` : Utilise cet outil pour chercher une information précise dans l'ensemble des mails (ex: "Retrouve le mail de l'inspection sur le protocole", "Que dit le rectorat à propos du budget ?").
   ATTENTION - Règles obligatoires pour cet outil :
   1. EXPANSION DE REQUÊTE : Si l'utilisateur te parle d'un expéditeur en particulier, ne cherche pas simplement des adresses e-mail exactes. Fournis des mots-clés, des synonymes et des rôles dans la `requete_semantique` (ex: pour "Dasen", cherche "Directeur académique, DASEN, cabinet, direction").
@@ -1334,7 +1375,7 @@ FORMATAGE STRICT (HTML TELEGRAM) pour communiquer avec le chef d'établissement 
 - Pour faire des listes, utilise simplement un tiret (-) ou une puce (•) en début de ligne, sans balise HTML de liste.
 """
 
-def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[str]] = None) -> str:
+def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[str]] = None, memoire_etablissement: Optional[str] = None) -> str:
     """
     Construit le prompt dynamique injecté à l'Agent Orchestrateur à chaque tour de parole.
     
@@ -1347,9 +1388,9 @@ def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[st
         system_alerts (Optional[List[str]]): Une liste optionnelle d'alertes techniques 
                                              provenant des services (ex: ["Drive indisponible", 
                                              "IMAP hors ligne"]).
-                                             
+        memoire_etablissement (Optional[str]): Un résumé de la mémoire de l'établissement (pilotage, annuaire, ...) pour contexte.
     Returns:
-        str: Le prompt formaté combinant le contexte dynamique et la demande de l'utilisateur.
+        str: Le prompt formaté combinant le contexte dynamique, la mémoire de l'établissement et la demande de l'utilisateur.
     """
     # Récupération de la date et de l'heure actuelles (crucial pour le Function Calling d'agenda)
     now = datetime.now()
@@ -1368,9 +1409,18 @@ def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[st
             f"Adapte tes réponses en conséquence, excuse-toi si nécessaire, et ne tente pas "
             f"d'utiliser les outils liés à ces services.]"
         )
+
+    # Formatage de la mémoire de l'établissement si elle est fournie
+    memory_section = ""
+    if memoire_etablissement:
+        memory_section = (
+            f"[MÉMOIRE ET RÈGLES DE L'ÉTABLISSEMENT]\n"
+            f"{memoire_etablissement}\n\n"
+        )
         
     # Construction du prompt final
     prompt = (
+        f"{memory_section}"
         f"[CONTEXTE TEMPOREL ET TECHNIQUE]\n"
         f"Date et heure actuelles : {current_time_str}{alerts_section}\n\n"
         f"[NOUVEAU MESSAGE DU CHEF D'ÉTABLISSEMENT]\n"
@@ -2300,7 +2350,7 @@ from typing import List, Optional
 from src.core.models import MailObject, TriDecision
 from src.core.exceptions import IMAPError
 from src.core.config import get_settings
-from src.utils import get_logger
+from src.utils import get_logger, extract_email_address, clean_html_content, estimate_token_count
 
 from email.message import EmailMessage
 import time
@@ -2597,7 +2647,11 @@ class IMAPService:
                 msg = email.message_from_bytes(response_part[1], policy=policy.default)
                 
                 sujet = str(msg.get('subject', '(Sans objet)'))
-                expediteur = str(msg.get('from', '(Expéditeur inconnu)'))
+                
+                # Nettoyage de l'expéditeur
+                raw_expediteur = str(msg.get('from', ''))
+                extracted_email = extract_email_address(raw_expediteur)
+                expediteur = extracted_email if extracted_email else '(Expéditeur inconnu)'
                 
                 # Parsing robuste de la date
                 date_tuple = email.utils.parsedate_tz(msg.get('date'))
@@ -2620,32 +2674,50 @@ class IMAPService:
                             filename = part.get_filename()
                             if filename:
                                 pieces_jointes.append(filename)
-                        elif content_type == "text/plain" and "attachment" not in content_disposition:
+                        
+                        # --- Prise en charge et nettoyage du HTML ---
+                        elif content_type in ["text/plain", "text/html"] and "attachment" not in content_disposition:
                             try:
-                                contenu_texte += part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
+                                raw_text = part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
+                                if content_type == "text/html":
+                                    contenu_texte += clean_html_content(raw_text) + "\n"
+                                else:
+                                    contenu_texte += raw_text + "\n"
                             except Exception:
                                 pass
                 else:
                     try:
-                        contenu_texte = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
+                        raw_payload = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
+                        # --- Nettoyage si le message unique est du HTML ---
+                        if msg.get_content_type() == "text/html":
+                            contenu_texte = clean_html_content(raw_payload)
+                        else:
+                            contenu_texte = raw_payload
                     except Exception:
                         contenu_texte = str(msg.get_payload())
+
+                # Nettoyage final du texte
+                contenu_final = contenu_texte.strip() or "(Contenu vide ou illisible)"
+                
+                # --- Estimation des tokens ---
+                nb_tokens = estimate_token_count(contenu_final)
 
                 # Gestion sécurisée du décodage de l'ID IMAP
                 id_str = mail_id.decode('utf-8') if isinstance(mail_id, bytes) else str(mail_id)
 
+                # Instanciation de l'objet métier avec le nombre de tokens intégré
                 return MailObject(
                     id_mail=id_str,
                     date_reception=date_reception,
                     expediteur=expediteur,
                     sujet=sujet,
-                    contenu_texte=contenu_texte.strip() or "(Contenu vide ou illisible)",
-                    pieces_jointes=pieces_jointes
+                    contenu_texte=contenu_final,
+                    pieces_jointes=pieces_jointes,
+                    nombre_tokens=nb_tokens
                 )
                 
         # Si la boucle se termine sans rien trouver
         return None
-
 
 
 ============================================================
@@ -3086,7 +3158,7 @@ async def programmer_alerte(message_rappel: str, delai_minutes: int) -> str:
 
 import re
 from typing import Optional, List
-from src.utils.logger import get_logger
+from src.utils import get_logger, truncate_text_for_llm
 from src.core import get_drive_service, get_settings
 
 # Initialisation du logger
@@ -3262,12 +3334,10 @@ async def rechercher_info_drive(mots_cles: str) -> str:
                 # Extraction du contenu textuel asynchrone
                 contenu = await drive_service.get_file_text_content(file_id, file_mime) 
                 
-                # Sécurité : on tronque si le document est démesurément long (ex: ~750 tokens)
-                limite_chars = 3000
-                if len(contenu) > limite_chars:
-                    contenu = contenu[:limite_chars] + "\n... [DOCUMENT TRONQUÉ CAR TROP LONG] ..."
+                # On utilise notre fonction utilitaire intelligente au lieu de la coupe brute.
+                contenu_propre = truncate_text_for_llm(contenu, max_tokens=1000)
                 
-                resultat_texte += f"Contenu extrait :\n{contenu}\n\n"
+                resultat_texte += f"Contenu extrait :\n{contenu_propre}\n\n"
                 
             except ValueError:
                 resultat_texte += "(Impossible de lire ce format de fichier. Seuls les GDocs et Textes simples sont lus.)\n\n"
@@ -3280,8 +3350,6 @@ async def rechercher_info_drive(mots_cles: str) -> str:
     except Exception as e:
         logger.error(f"Erreur globale dans rechercher_info_drive: {e}")
         return "Une erreur technique est survenue lors de la recherche dans le Drive. Vérifiez l'authentification."
-    
-
 
 
 
@@ -3426,7 +3494,7 @@ async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_messag
     finally:
         await imap_service.disconnect()
 
-async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
+async def generer_briefing_emails(criteres: Optional[str] = None, limite: int = 50) -> str:
     """
     Se connecte en direct à la messagerie pour relever les e-mails récents ou non lus, 
     et génère un résumé intelligent selon les instructions fournies.
@@ -3440,8 +3508,9 @@ async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
     Args:
         criteres (Optional[str]): Les instructions de filtrage dictées par l'utilisateur 
                                   en langage naturel (ex: "uniquement les urgences", 
-                                  "les mails parlant de budget", "les messages des parents"). 
+                                  "les mails parlant de budget", "les messages des parents").
                                   Si l'utilisateur demande juste un point général, laisse vide.
+        limite (int): Le nombre maximum d'e-mails non lus à récupérer par dossier. Défaut à 50.
 
     Returns:
         str: Le résumé structuré des e-mails correspondants généré par l'Agent de Briefing, 
@@ -3450,7 +3519,7 @@ async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
     from src.agents.briefing_agent import BriefingAgent
     from src.core.config import get_settings
     
-    logger.info(f"Outil 'generer_briefing_emails' appelé avec les critères : '{criteres}'")    
+    logger.info(f"Outil 'generer_briefing_emails' appelé avec les critères : '{criteres}' et limite: {limite}")    
     imap_service = get_imap_service()
     settings = get_settings()
     
@@ -3463,7 +3532,8 @@ async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
         await imap_service.connect()
         
         # On utilise la nouvelle méthode qui scanne dynamiquement toute l'arborescence
-        tous_les_nouveaux_mails = await imap_service.fetch_all_unseen_emails(limit_per_folder=20)
+        # en appliquant la limite demandée par l'Orchestrateur
+        tous_les_nouveaux_mails = await imap_service.fetch_all_unseen_emails(limit_per_folder=limite)
         
         if not tous_les_nouveaux_mails:
             return "La relève est terminée : vous n'avez aucun e-mail non lu dans l'ensemble de votre messagerie."
@@ -3599,7 +3669,14 @@ def get_logger(module_name: str) -> logging.Logger:
 --- FICHIER : src/utils/text_utils.py ---
 ============================================================
 
+import logging
 from typing import Optional, List
+from bs4 import BeautifulSoup
+import re
+from email.utils import parseaddr
+
+# Initialisation du logger pour le module
+logger = logging.getLogger(__name__)
 
 def clean_html_content(raw_html: str) -> str:
     """
@@ -3613,8 +3690,35 @@ def clean_html_content(raw_html: str) -> str:
     Returns:
         str: Le texte extrait et nettoyé des balises et scripts.
     """
-    pass
+    if not raw_html or not isinstance(raw_html, str):
+        return ""
 
+    try:
+        # Initialisation de BeautifulSoup avec le parser standard de Python
+        soup = BeautifulSoup(raw_html, "html.parser")
+
+        # Destruction des balises invisibles ou polluantes
+        for script_or_style in soup(["script", "style", "head", "title", "meta"]):
+            script_or_style.decompose()
+
+        # Extraction du texte en utilisant un saut de ligne comme séparateur de blocs
+        text = soup.get_text(separator="\n")
+
+        # Nettoyage des espaces superflus et des sauts de ligne multiples
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        
+        # Reconstitution d'un texte propre et aéré
+        cleaned_text = "\n".join(chunk for chunk in chunks if chunk)
+
+        return cleaned_text
+
+    except Exception as e:
+        logger.error(f"Échec du nettoyage HTML : {e}", exc_info=True)
+        # Dégradation gracieuse : on renvoie la chaîne d'origine au lieu de crasher le pipeline
+        return raw_html
+
+    
 def extract_email_address(header_string: str) -> Optional[str]:
     """
     Extrait l'adresse e-mail pure à partir d'un en-tête d'expéditeur complexe.
@@ -3626,8 +3730,32 @@ def extract_email_address(header_string: str) -> Optional[str]:
     Returns:
         Optional[str]: L'adresse e-mail isolée, ou None si le format n'est pas reconnu.
     """
-    pass
+    # 1. Vérification défensive des types et de la validité de l'entrée
+    if not header_string or not isinstance(header_string, str):
+        return None
 
+    try:
+        # 2. Utilisation de la librairie standard (robuste pour la norme RFC 2822)
+        # parseaddr renvoie un tuple ('Nom complet', 'adresse@email.com')
+        _, email_address = parseaddr(header_string)
+        
+        if email_address and '@' in email_address:
+            return email_address.strip().lower()
+        
+        # 3. Fallback (Solution de repli) : Regex si l'en-tête est sévèrement malformé
+        # Cherche le motif standard d'un e-mail n'importe où dans la chaîne
+        match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', header_string)
+        if match:
+            return match.group(0).strip().lower()
+
+        # Si on arrive ici, c'est qu'aucune adresse valide n'a pu être extraite
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Erreur inattendue lors de l'extraction de l'e-mail depuis '{header_string}' : {e}")
+        return None
+
+    
 def estimate_token_count(text: str) -> int:
     """
     Estime de manière heuristique le nombre de tokens d'une chaîne de caractères.
@@ -3640,7 +3768,23 @@ def estimate_token_count(text: str) -> int:
     Returns:
         int: Une estimation du nombre de tokens.
     """
-    pass
+    if not text or not isinstance(text, str):
+        return 0
+        
+    try:
+        # Heuristique prudente pour la langue française : ~3 caractères = 1 token.
+        # On utilise la division entière (//) pour des raisons de performance.
+        # On ajoute un "buffer" arbitraire de 5 tokens pour couvrir d'éventuels 
+        # marqueurs de début/fin de séquence ajoutés par le modèle en interne.
+        estimation = (len(text) // 3) + 5
+        
+        return estimation
+        
+    except Exception as e:
+        logger.warning(f"Erreur inattendue lors de l'estimation des tokens : {e}")
+        # Dégradation gracieuse : on calcule rudimentairement pour éviter de crasher
+        return len(str(text)) // 3
+    
 
 def truncate_text_for_llm(text: str, max_tokens: int) -> str:
     """
@@ -3654,7 +3798,47 @@ def truncate_text_for_llm(text: str, max_tokens: int) -> str:
     Returns:
         str: Le texte tronqué (avec un indicateur "[...]") ou le texte original.
     """
-    pass
+    if not text or not isinstance(text, str):
+        return ""
+        
+    try:
+        # Conversion de la limite de tokens en limite de caractères 
+        # (Basé sur notre heuristique : 1 token ~ 3 caractères)
+        max_chars = max_tokens * 3
+        
+        # Si le texte est déjà dans les limites, on le retourne intact
+        if len(text) <= max_chars:
+            return text
+            
+        # Coupe brute initiale à la limite autorisée
+        truncated = text[:max_chars]
+        
+        # Recherche du meilleur point de coupure naturel en partant de la fin
+        # 1er choix : Le dernier saut de ligne (le plus propre)
+        cut_index = truncated.rfind('\n')
+        
+        # 2ème choix : Si pas de saut de ligne, on cherche la fin d'une phrase
+        if cut_index == -1:
+            cut_index = truncated.rfind('. ')
+            
+        # 3ème choix : Si pas de point, on cherche au moins un espace pour ne pas couper un mot
+        if cut_index == -1:
+            cut_index = truncated.rfind(' ')
+            
+        # Si un point de coupure logique a été trouvé, on réajuste la chaîne
+        if cut_index > 0:
+            # On inclut le point final s'il s'agit d'une fin de phrase
+            if truncated[cut_index] == '.':
+                cut_index += 1
+            truncated = truncated[:cut_index]
+            
+        # Ajout d'une balise claire pour informer le LLM (et le Perdir) de la coupure
+        return truncated.strip() + "\n\n... [DOCUMENT TRONQUÉ CAR TROP LONG] ..."
+        
+    except Exception as e:
+        logger.warning(f"Erreur inattendue lors de la troncature du texte : {e}")
+        # Dégradation gracieuse : coupe de force sans réflexion
+        return text[:(max_tokens * 3)] + " [...]"
 
 
 def split_telegram_message(text: str, max_length: int = 4096) -> List[str]:
@@ -3842,6 +4026,7 @@ class PipelineAMails:
 ============================================================
 
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from telegram import Update
@@ -3851,7 +4036,7 @@ from telegram.constants import ParseMode
 from src.utils import get_logger
 from src.agents import OrchestratorAgent
 from src.services import TelegramBotService
-from src.core import ChatHistory, ConversationTurn
+from src.core import ChatHistory, ConversationTurn, get_settings
 from src.utils import split_telegram_message
 
 # Initialisation du logger
@@ -3894,21 +4079,6 @@ class PipelineBTelegram:
         
         logger.debug("Pipeline B (Telegram) initialisé avec ses dépendances.")
 
-    def _save_history(self) -> None:
-        """
-        Sauvegarde de manière synchrone l'état actuel de la mémoire conversationnelle 
-        dans un fichier JSON local.
-        """
-        try:
-            # S'assurer que le dossier parent (ex: data/) existe
-            self.history_file_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Génération du JSON via Pydantic et écriture dans le fichier
-            json_data = self.chat_history.model_dump_json(indent=2)
-            self.history_file_path.write_text(json_data, encoding="utf-8")
-            logger.debug("Historique conversationnel sauvegardé localement.")
-        except Exception as e:
-            logger.error(f"Échec de la sauvegarde de l'historique conversationnel : {e}")
 
     async def process_telegram_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
@@ -4021,6 +4191,39 @@ class PipelineBTelegram:
         )
         
         return response.text.strip()
+
+
+    def _purge_old_history(self, days: int = 7) -> None:
+        """
+        Filtre l'historique conversationnel pour ne conserver que les messages
+        plus récents que le nombre de jours spécifié.
+        """
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        # On recrée la liste en ne gardant que les éléments récents
+        self.chat_history.turns = [
+            turn for turn in self.chat_history.turns 
+            if turn.timestamp >= cutoff_date
+        ]
+
+    def _save_history(self) -> None:
+        """
+        Sauvegarde de manière synchrone l'état actuel de la mémoire conversationnelle 
+        dans un fichier JSON local, après avoir purgé les messages obsolètes.
+        """
+        try:
+            # S'assurer que le dossier parent (ex: data/) existe
+            self.history_file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Nettoyage de la mémoire glissante avant sauvegarde
+            self._purge_old_history(days=get_settings().CHAT_HISTORY_DAYS)
+            
+            # Génération du JSON via Pydantic et écriture dans le fichier
+            json_data = self.chat_history.model_dump_json(indent=2)
+            self.history_file_path.write_text(json_data, encoding="utf-8")
+            logger.debug("Historique conversationnel sauvegardé localement (et purgé).")
+        except Exception as e:
+            logger.error(f"Échec de la sauvegarde de l'historique conversationnel : {e}")
 
 
 ============================================================

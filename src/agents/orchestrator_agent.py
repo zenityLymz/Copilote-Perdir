@@ -5,6 +5,7 @@ from google.genai import types
 from src.core.models import ChatHistory
 from src.core.config import get_settings
 from src.core.exceptions import AgentError
+from src.core.dependencies import get_drive_service
 from src.utils.logger import get_logger
 
 # Importation des constructeurs de prompts
@@ -99,6 +100,25 @@ class OrchestratorAgent:
             )
         return formatted_history
 
+    # Téléchargement asynchrone de la mémoire de l'établissement depuis le Drive pour enrichir le prompt
+    async def _fetch_memoire_etablissement(self) -> Optional[str]:
+        """
+        Récupère le contenu du document Mémoire de l'Établissement depuis le Drive.
+        Gère les erreurs silencieusement pour ne pas bloquer l'Orchestrateur.
+        """
+        try:
+            settings = get_settings()
+            drive_service = get_drive_service()
+            file_id = settings.MEMOIRE_FILE_ID
+            
+            logger.debug("Téléchargement de la mémoire de l'établissement depuis Google Drive...")
+            content = await drive_service.download_file_content(file_id)
+            return content
+        except Exception as e:
+            # Dégradation gracieuse : On loggue l'erreur mais on ne crashe pas
+            logger.warning(f"Impossible de récupérer la mémoire de l'établissement (Drive injoignable ?) : {e}")
+            return None
+
     async def process_user_request(self, user_message: str, chat_history: ChatHistory) -> str:
         """
         Traite une nouvelle demande du chef d'établissement.
@@ -115,13 +135,20 @@ class OrchestratorAgent:
         logger.info("Début du cycle de raisonnement de l'Orchestrateur (Agentic Loop).")
         
         try:
-            # 1. Préparation du contexte et des prompts
+            # 1. Téléchargement à la volée de la mémoire (Annuaire, Règles)
+            memoire_content = await self._fetch_memoire_etablissement()
+
+            # 2. Préparation du contexte et des prompts
             system_prompt = get_orchestrator_system_prompt()
-            # Injection dynamique de la date, heure, et alertes éventuelles
-            enriched_user_prompt = build_orchestrator_prompt(user_message=user_message)
+            
+            # Injection dynamique de la date, heure, mémoire, et alertes éventuelles (vide pour l'instant)
+            enriched_user_prompt = build_orchestrator_prompt(
+                user_message=user_message,
+                memoire_etablissement=memoire_content
+            )
             formatted_history = self._format_chat_history(chat_history)
 
-            # 2. Création de la session de chat asynchrone avec les outils injectés
+            # 3. Création de la session de chat asynchrone avec les outils injectés
             chat = self.client.aio.chats.create(
                 model=self.model_name,
                 history=formatted_history,
@@ -132,7 +159,7 @@ class OrchestratorAgent:
                 )
             )
 
-            # 3. Envoi du message. 
+            # 4. Envoi du message.
             # Le SDK google-genai gère automatiquement l'exécution des fonctions Python (Function Calling)
             # si l'IA décide de les appeler, puis il renvoie la réponse finale synthétisée.
             response = await chat.send_message(enriched_user_prompt)

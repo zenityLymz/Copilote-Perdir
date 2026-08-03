@@ -49,7 +49,7 @@ FORMATAGE STRICT (HTML TELEGRAM) pour communiquer avec le chef d'établissement 
 - Pour faire des listes, utilise simplement un tiret (-) ou une puce (•) en début de ligne, sans balise HTML de liste.
 """
 
-def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[str]] = None) -> str:
+def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[str]] = None, memoire_etablissement: Optional[str] = None) -> str:
     """
     Construit le prompt dynamique injecté à l'Agent Orchestrateur à chaque tour de parole.
     
@@ -62,9 +62,9 @@ def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[st
         system_alerts (Optional[List[str]]): Une liste optionnelle d'alertes techniques 
                                              provenant des services (ex: ["Drive indisponible", 
                                              "IMAP hors ligne"]).
-                                             
+        memoire_etablissement (Optional[str]): Un résumé de la mémoire de l'établissement (pilotage, annuaire, ...) pour contexte.
     Returns:
-        str: Le prompt formaté combinant le contexte dynamique et la demande de l'utilisateur.
+        str: Le prompt formaté combinant le contexte dynamique, la mémoire de l'établissement et la demande de l'utilisateur.
     """
     # Récupération de la date et de l'heure actuelles (crucial pour le Function Calling d'agenda)
     now = datetime.now()
@@ -83,9 +83,18 @@ def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[st
             f"Adapte tes réponses en conséquence, excuse-toi si nécessaire, et ne tente pas "
             f"d'utiliser les outils liés à ces services.]"
         )
+
+    # Formatage de la mémoire de l'établissement si elle est fournie
+    memory_section = ""
+    if memoire_etablissement:
+        memory_section = (
+            f"[MÉMOIRE ET RÈGLES DE L'ÉTABLISSEMENT]\n"
+            f"{memoire_etablissement}\n\n"
+        )
         
     # Construction du prompt final
     prompt = (
+        f"{memory_section}"
         f"[CONTEXTE TEMPOREL ET TECHNIQUE]\n"
         f"Date et heure actuelles : {current_time_str}{alerts_section}\n\n"
         f"[NOUVEAU MESSAGE DU CHEF D'ÉTABLISSEMENT]\n"

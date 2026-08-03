@@ -29,6 +29,7 @@ class MailObject(BaseModel):
     pieces_jointes: List[str] = Field(default_factory=list, description="Noms des pièces jointes")
     est_traite: bool = Field(default=False, description="Indique si le mail a déjà été traité par le workflow")
     nombre_tokens: Optional[int] = Field(None, description="Taille estimée du texte pour sécuriser l'envoi vers l'API d'embeddings")
+    dossier_source: Optional[str] = Field(None, description="Dossier IMAP d'origine (utile pour le marquage)")
 
 
 class IA_TriResponse(BaseModel):
@@ -77,6 +78,14 @@ class ConversationTurn(BaseModel):
     message: str = Field(
         ..., 
         description="Le contenu textuel du message."
+    )
+    timestamp: datetime = Field(
+        default_factory=datetime.now, 
+        description="Horodatage exact du message"
+    )
+    est_synthetise: bool = Field(
+        default=False, 
+        description="Indique si le message a déjà été traité par la synthèse de la mémoire de l'établissement."
     )
 
 class ChatHistory(BaseModel):

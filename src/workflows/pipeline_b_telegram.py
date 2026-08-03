@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from telegram import Update
@@ -8,7 +9,7 @@ from telegram.constants import ParseMode
 from src.utils import get_logger
 from src.agents import OrchestratorAgent
 from src.services import TelegramBotService
-from src.core import ChatHistory, ConversationTurn
+from src.core import ChatHistory, ConversationTurn, get_settings
 from src.utils import split_telegram_message
 
 # Initialisation du logger
@@ -51,21 +52,6 @@ class PipelineBTelegram:
         
         logger.debug("Pipeline B (Telegram) initialisé avec ses dépendances.")
 
-    def _save_history(self) -> None:
-        """
-        Sauvegarde de manière synchrone l'état actuel de la mémoire conversationnelle 
-        dans un fichier JSON local.
-        """
-        try:
-            # S'assurer que le dossier parent (ex: data/) existe
-            self.history_file_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Génération du JSON via Pydantic et écriture dans le fichier
-            json_data = self.chat_history.model_dump_json(indent=2)
-            self.history_file_path.write_text(json_data, encoding="utf-8")
-            logger.debug("Historique conversationnel sauvegardé localement.")
-        except Exception as e:
-            logger.error(f"Échec de la sauvegarde de l'historique conversationnel : {e}")
 
     async def process_telegram_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
@@ -178,3 +164,36 @@ class PipelineBTelegram:
         )
         
         return response.text.strip()
+
+
+    def _purge_old_history(self, days: int = 7) -> None:
+        """
+        Filtre l'historique conversationnel pour ne conserver que les messages
+        plus récents que le nombre de jours spécifié.
+        """
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        # On recrée la liste en ne gardant que les éléments récents
+        self.chat_history.turns = [
+            turn for turn in self.chat_history.turns 
+            if turn.timestamp >= cutoff_date
+        ]
+
+    def _save_history(self) -> None:
+        """
+        Sauvegarde de manière synchrone l'état actuel de la mémoire conversationnelle 
+        dans un fichier JSON local, après avoir purgé les messages obsolètes.
+        """
+        try:
+            # S'assurer que le dossier parent (ex: data/) existe
+            self.history_file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Nettoyage de la mémoire glissante avant sauvegarde
+            self._purge_old_history(days=get_settings().CHAT_HISTORY_DAYS)
+            
+            # Génération du JSON via Pydantic et écriture dans le fichier
+            json_data = self.chat_history.model_dump_json(indent=2)
+            self.history_file_path.write_text(json_data, encoding="utf-8")
+            logger.debug("Historique conversationnel sauvegardé localement (et purgé).")
+        except Exception as e:
+            logger.error(f"Échec de la sauvegarde de l'historique conversationnel : {e}")

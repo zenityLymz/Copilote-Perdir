@@ -377,3 +377,119 @@ class IMAPService:
                 
         # Si la boucle se termine sans rien trouver
         return None
+
+    async def fetch_unsynthesized_emails(self, limit_per_folder: int = 50) -> List[MailObject]:
+        """
+        Récupère tous les e-mails de la boîte (sauf corbeille) qui n'ont pas encore 
+        été traités par le Pipeline C de synthèse nocturne.
+        N'applique AUCUN flag pour respecter le principe d'acquittement (ACK).
+        """
+        return await asyncio.to_thread(self._fetch_unsynthesized_emails_sync, limit_per_folder)
+
+    def _fetch_unsynthesized_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
+        import re
+        if not self.mail:
+            raise IMAPError("Service IMAP non connecté.")
+
+        logger.info("Récupération des e-mails non synthétisés (UNKEYWORD CopiloteSynthetise)...")
+        emails_list = []
+        
+        try:
+            status, folders = self.mail.list()
+            if status != 'OK':
+                raise IMAPError("Impossible de lister les dossiers de la messagerie.")
+
+            for folder_data in folders:
+                folder_str = folder_data.decode('utf-8')
+                
+                # Exclusion de la corbeille (adapter selon les noms usuels)
+                if "trash" in folder_str.lower() or "corbeille" in folder_str.lower() or "deleted" in folder_str.lower():
+                    continue
+
+                # Extraction propre du nom du dossier IMAP
+                match = re.search(r'\"([^\"]+)\"$', folder_str)
+                if match:
+                    folder_name = f'"{match.group(1)}"'
+                else:
+                    folder_name = folder_str.split()[-1]
+
+                # Sélection en lecture seule (sécurité supplémentaire)
+                status, _ = self.mail.select(folder_name, readonly=True)
+                if status != 'OK':
+                    continue
+
+                # On cherche ceux qui n'ont PAS le tag CopiloteSynthetise
+                status, messages = self.mail.uid('search', None, 'UNKEYWORD', 'CopiloteSynthetise')
+                if status != 'OK' or not messages[0]:
+                    continue
+
+                mail_ids = messages[0].split()
+                mail_ids = mail_ids[-limit_per_folder:] 
+                
+                for mail_id in mail_ids:
+                    status, msg_data = self.mail.uid('fetch', mail_id, '(BODY.PEEK[])')
+                    if status != 'OK':
+                        continue
+
+                    mail_obj = self._parse_email_from_bytes(mail_id, msg_data)
+                    if mail_obj:
+                        # Injection du dossier source pour permettre le marquage ultérieur
+                        mail_obj.dossier_source = folder_name
+                        emails_list.append(mail_obj)
+
+            logger.info(f"{len(emails_list)} e-mail(s) en attente de synthèse récupéré(s).")
+            return emails_list
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des e-mails pour la synthèse : {e}")
+            raise IMAPError(f"Erreur IMAP globale (Synthèse) : {e}")
+
+
+    async def mark_emails_as_synthesized(self, emails: List[MailObject]) -> bool:
+        """
+        Méthode d'Acquittement (ACK).
+        Applique le flag 'CopiloteSynthetise' sur une liste d'e-mails pour qu'ils 
+        ne soient plus traités lors des prochaines synthèses.
+        """
+        return await asyncio.to_thread(self._mark_emails_as_synthesized_sync, emails)
+
+    def _mark_emails_as_synthesized_sync(self, emails: List[MailObject]) -> bool:
+        if not self.mail:
+            logger.error("Marquage impossible : IMAP non connecté.")
+            return False
+            
+        if not emails:
+            return True
+
+        try:
+            # 1. Regroupement intelligent des e-mails par dossier d'origine
+            # Cela évite de faire des 'SELECT' intempestifs à chaque e-mail
+            folders_dict = {}
+            for mail in emails:
+                folder = getattr(mail, 'dossier_source', '"INBOX"')
+                if folder not in folders_dict:
+                    folders_dict[folder] = []
+                folders_dict[folder].append(mail.id_mail.encode('utf-8'))
+                
+            # 2. Itération par dossier et marquage par lots (Batching)
+            for folder, uids in folders_dict.items():
+                # On doit ouvrir le dossier en mode écriture (readonly=False)
+                status, _ = self.mail.select(folder, readonly=False)
+                if status != 'OK':
+                    logger.warning(f"Impossible de sélectionner le dossier {folder} pour le marquage.")
+                    continue
+                    
+                # Concaténation des UIDs séparés par une virgule pour une requête IMAP optimisée
+                uids_str = b','.join(uids)
+                status, _ = self.mail.uid('STORE', uids_str, '+FLAGS', 'CopiloteSynthetise')
+                
+                if status == 'OK':
+                    logger.debug(f"{len(uids)} e-mail(s) marqué(s) 'CopiloteSynthetise' dans {folder}.")
+                else:
+                    logger.warning(f"Échec du marquage dans le dossier {folder}.")
+                    
+            return True
+            
+        except Exception as e:
+            logger.error(f"Erreur critique lors du marquage des e-mails (ACK) : {e}")
+            return False

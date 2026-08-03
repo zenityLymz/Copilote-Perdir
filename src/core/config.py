@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # --- Temps de pause entre les appels à l'API Gemini pour éviter le throttling ---
     GEMINI_API_PAUSE_SECONDS: float = 10.0
 
+    # --- Nombre de jours de mémoire à conserver pour le contexte conversationnel ---
+    CHAT_HISTORY_DAYS: int = 7
+
     # Comportement de Pydantic pour lire le fichier .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
