@@ -1,6 +1,6 @@
 import re
 from typing import Optional, List
-from src.utils.logger import get_logger
+from src.utils import get_logger, truncate_text_for_llm
 from src.core import get_drive_service, get_settings
 
 # Initialisation du logger
@@ -176,12 +176,10 @@ async def rechercher_info_drive(mots_cles: str) -> str:
                 # Extraction du contenu textuel asynchrone
                 contenu = await drive_service.get_file_text_content(file_id, file_mime) 
                 
-                # Sécurité : on tronque si le document est démesurément long (ex: ~750 tokens)
-                limite_chars = 3000
-                if len(contenu) > limite_chars:
-                    contenu = contenu[:limite_chars] + "\n... [DOCUMENT TRONQUÉ CAR TROP LONG] ..."
+                # On utilise notre fonction utilitaire intelligente au lieu de la coupe brute.
+                contenu_propre = truncate_text_for_llm(contenu, max_tokens=1000)
                 
-                resultat_texte += f"Contenu extrait :\n{contenu}\n\n"
+                resultat_texte += f"Contenu extrait :\n{contenu_propre}\n\n"
                 
             except ValueError:
                 resultat_texte += "(Impossible de lire ce format de fichier. Seuls les GDocs et Textes simples sont lus.)\n\n"
@@ -194,5 +192,3 @@ async def rechercher_info_drive(mots_cles: str) -> str:
     except Exception as e:
         logger.error(f"Erreur globale dans rechercher_info_drive: {e}")
         return "Une erreur technique est survenue lors de la recherche dans le Drive. Vérifiez l'authentification."
-    
-

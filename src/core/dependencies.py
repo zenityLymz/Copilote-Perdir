@@ -15,12 +15,14 @@ if TYPE_CHECKING:
     from src.services.imap_service import IMAPService
     from src.services.chroma_service import ChromaDBService
     from src.services.google_drive_api import GoogleDriveService
+    from src.services.telegram_bot import TelegramBotService
 
 # L'astuce est de mettre le nom du type entre guillemets ('IMAPService') 
 # car la classe n'est pas "réellement" importée à l'exécution.
 _imap_service: Optional['IMAPService'] = None
 _chroma_service: Optional['ChromaDBService'] = None
 _drive_service: Optional['GoogleDriveService'] = None
+_telegram_service: Optional['TelegramBotService'] = None
 
 # --- Service IMAP ---
 def get_imap_service() -> IMAPService:
@@ -51,3 +53,13 @@ def get_drive_service() -> GoogleDriveService:
 def set_drive_service(service: GoogleDriveService) -> None:
     global _drive_service
     _drive_service = service
+
+# --- Service Telegram ---
+def get_telegram_service() -> TelegramBotService:
+    if _telegram_service is None:
+        raise RuntimeError("Le service Telegram n'a pas été initialisé dans le registre.")
+    return _telegram_service
+
+def set_telegram_service(service: TelegramBotService) -> None:
+    global _telegram_service
+    _telegram_service = service

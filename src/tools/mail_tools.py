@@ -5,59 +5,92 @@ from src.core import get_imap_service, get_chroma_service
 # Initialisation du logger
 logger = get_logger(__name__)
 
-async def rechercher_dans_les_emails(requete_semantique: str) -> str:
+async def rechercher_dans_les_emails(
+    requete_semantique: str, 
+    date_debut: Optional[str] = None, 
+    date_fin: Optional[str] = None,
+    expediteur: Optional[str] = None
+) -> str:
     """
     Interroge la mémoire vectorielle de l'établissement pour retrouver une information 
     précise dans la totalité des e-mails (récents ou anciens, lus ou non lus).
-    
+
     ATTENTION POUR LE COPILOTE : Utilise cet outil dès que le chef d'établissement 
     te demande de "retrouver", "chercher" ou te pose une question sur un fait passé 
     ou une information contenue dans sa messagerie (ex: "Quelle est la date de la 
     prochaine réunion de bassin ?", "Retrouve le mail de l'inspecteur sur la réforme").
     Ne réponds jamais de mémoire, utilise toujours cet outil pour vérifier les faits.
+
     Même lorsque le chef d'établissement ne te pas demande explicitement de rechercher 
-    dans ses e-mails, mais que tu manques de contexte pour réaliser une action (trouver la 
-    date d'un rendez-vous ou le nom d'un parent pour créer ensuite un événement d'agenda ou une tâche), 
-    si tu soupçonnes que tu peux trouver des informations dans les e-mails, utilise cet outil 
-    pour récupérer des informations pertinentes.
+    dans ses e-mails, mais que tu manques de contexte pour réaliser une action, 
+    utilise cet outil pour récupérer des informations pertinentes.
+
     En revanche, quand le chef d'établissement te demande de résumer ou faire un point sur ses e-mails, 
     c'est l'outil 'generer_briefing_emails' qu'il faut utiliser, pas celui-ci.
 
     Args:
-        requete_semantique (str): La question exacte de l'utilisateur ou les concepts 
-                                  clés à rechercher, formulés en langage naturel clair 
-                                  (ex: "date réunion chefs établissement bassin").
+        requete_semantique (str): La question exacte de l'utilisateur ou les concepts clés enrichis.
+        date_debut (Optional[str]): Date de début de la fenêtre de recherche (format ISO 8601).
+        date_fin (Optional[str]): Date de fin de la fenêtre de recherche (format ISO 8601).
+        expediteur (Optional[str]): Le nom ou l'adresse e-mail (partielle ou complète) de l'expéditeur.
 
     Returns:
         str: Le contexte textuel reconstitué à partir des e-mails les plus pertinents, 
              ou un message clair si rien n'a été trouvé.
     """
     
-    logger.info(f"Outil 'rechercher_dans_les_emails' appelé avec la requête : '{requete_semantique}'")
+    logger.info(
+        f"Outil 'rechercher_dans_les_emails' appelé. Requête: '{requete_semantique}' | "
+        f"Expéditeur: '{expediteur}' | Période: {date_debut or 'Origine'} -> {date_fin or 'Aujourdhui'}"
+    )
 
-    # Récupération de l'instance ChromaDB déjà initialisée depuis le registre
     chroma_service = get_chroma_service()
     
     try:
-        # On demande les 5 e-mails les plus pertinents sémantiquement
-        resultats = await chroma_service.search_semantic(query=requete_semantique, n_results=5)
+        # 1. Construction dynamique des conditions de filtrage ChromaDB
+        conditions = []
+        
+        if date_debut:
+            conditions.append({"date_reception": {"$gte": date_debut}})
+        if date_fin:
+            conditions.append({"date_reception": {"$lte": date_fin}})
+        if expediteur:
+            # Utilisation de $contains car l'en-tête "From" est souvent complexe 
+            # (ex: "Jean Dupont <jean.dupont@ac-lyon.fr>")
+            conditions.append({"expediteur": {"$contains": expediteur}})
+            
+        # 2. Assemblage final du filter_metadata
+        filter_metadata = None
+        if len(conditions) > 1:
+            # ChromaDB nécessite $and pour de multiples conditions
+            filter_metadata = {"$and": conditions}
+        elif len(conditions) == 1:
+            # S'il n'y a qu'une seule condition, on la passe directement
+            filter_metadata = conditions[0]
+
+        # 3. Recherche vectorielle avec sur-échantillonnage (15 résultats au lieu de 5)
+        resultats = await chroma_service.search_semantic(
+            query=requete_semantique, 
+            n_results=15, 
+            filter_metadata=filter_metadata
+        )
         
         if not resultats:
-            return "Aucun e-mail pertinent n'a été trouvé dans la base de données pour cette recherche."
+            return "Aucun e-mail pertinent n'a été trouvé dans la base de données pour cette recherche (avec les filtres spécifiés)."
             
-        # Formatage des résultats pour que l'Orchestrateur (LLM) puisse les lire facilement
+        # 4. Formatage pour l'ingestion par l'Orchestrateur
         contexte_formate = "Voici les extraits d'e-mails trouvés dans la base de données :\n\n"
         
         for i, res in enumerate(resultats, 1):
             meta = res.get('metadata', {})
             date_reception = meta.get('date_reception', 'Date inconnue')
-            expediteur = meta.get('expediteur', 'Expéditeur inconnu')
+            mail_expediteur = meta.get('expediteur', 'Expéditeur inconnu')
             sujet = meta.get('sujet', 'Sans objet')
             texte = res.get('document', '')
             
             contexte_formate += f"--- E-MAIL {i} ---\n"
             contexte_formate += f"Date : {date_reception}\n"
-            contexte_formate += f"De : {expediteur}\n"
+            contexte_formate += f"De : {mail_expediteur}\n"
             contexte_formate += f"Sujet : {sujet}\n"
             contexte_formate += f"Extrait du contenu : {texte}\n"
             contexte_formate += "-" * 20 + "\n\n"
@@ -65,7 +98,7 @@ async def rechercher_dans_les_emails(requete_semantique: str) -> str:
         return contexte_formate
         
     except Exception as e:
-        logger.error(f"Échec de la recherche vectorielle dans les e-mails : {e}")
+        logger.error(f"Échec de la recherche vectorielle dans les e-mails : {e}", exc_info=True)
         return "Erreur technique : impossible d'accéder à la base de données des e-mails pour le moment."
 
 async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_message: str) -> bool:
@@ -102,7 +135,7 @@ async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_messag
     finally:
         await imap_service.disconnect()
 
-async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
+async def generer_briefing_emails(criteres: Optional[str] = None, limite: int = 50) -> str:
     """
     Se connecte en direct à la messagerie pour relever les e-mails récents ou non lus, 
     et génère un résumé intelligent selon les instructions fournies.
@@ -116,8 +149,9 @@ async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
     Args:
         criteres (Optional[str]): Les instructions de filtrage dictées par l'utilisateur 
                                   en langage naturel (ex: "uniquement les urgences", 
-                                  "les mails parlant de budget", "les messages des parents"). 
+                                  "les mails parlant de budget", "les messages des parents").
                                   Si l'utilisateur demande juste un point général, laisse vide.
+        limite (int): Le nombre maximum d'e-mails non lus à récupérer par dossier. Défaut à 50.
 
     Returns:
         str: Le résumé structuré des e-mails correspondants généré par l'Agent de Briefing, 
@@ -126,7 +160,7 @@ async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
     from src.agents.briefing_agent import BriefingAgent
     from src.core.config import get_settings
     
-    logger.info(f"Outil 'generer_briefing_emails' appelé avec les critères : '{criteres}'")    
+    logger.info(f"Outil 'generer_briefing_emails' appelé avec les critères : '{criteres}' et limite: {limite}")    
     imap_service = get_imap_service()
     settings = get_settings()
     
@@ -139,7 +173,8 @@ async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
         await imap_service.connect()
         
         # On utilise la nouvelle méthode qui scanne dynamiquement toute l'arborescence
-        tous_les_nouveaux_mails = await imap_service.fetch_all_unseen_emails(limit_per_folder=20)
+        # en appliquant la limite demandée par l'Orchestrateur
+        tous_les_nouveaux_mails = await imap_service.fetch_all_unseen_emails(limit_per_folder=limite)
         
         if not tous_les_nouveaux_mails:
             return "La relève est terminée : vous n'avez aucun e-mail non lu dans l'ensemble de votre messagerie."

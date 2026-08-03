@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 from src.utils import get_logger
-from src.core import AgendaTaskRequest, get_drive_service
+from src.core import AgendaTaskRequest, get_drive_service, get_telegram_service
 from src.services.google_calendar_tasks import GoogleCalendarTasksService
 
 # Initialisation du logger
@@ -222,7 +222,7 @@ async def gerer_taches(action: str, titre: Optional[str] = None, echeance: Optio
 
 
 
-def programmer_alerte(message_rappel: str, delai_minutes: int) -> bool:
+async def programmer_alerte(message_rappel: str, delai_minutes: int) -> str:
     """
     Planifie l'envoi d'une notification Telegram (rappel) au chef d'établissement après 
     un temps donné.
@@ -235,6 +235,26 @@ def programmer_alerte(message_rappel: str, delai_minutes: int) -> bool:
         delai_minutes (int): Le nombre de minutes à attendre avant de déclencher l'alerte.
 
     Returns:
-        bool: True si le minuteur a été activé avec succès, False sinon.
+        str: Message confirmant l'activation du minuteur pour l'IA.
     """
-    pass
+    logger.info(f"Outil 'programmer_alerte' appelé : '{message_rappel}' dans {delai_minutes} minutes.")
+    
+    try:
+        delai_secondes = delai_minutes * 60
+        
+        # 1. On définit la fonction qui tournera en tâche de fond
+        async def alerte_en_arriere_plan():
+            await asyncio.sleep(delai_secondes)
+            logger.info(f"⏰ DRING ! Fin du minuteur. Envoi du message : {message_rappel}")
+            
+            telegram_service = get_telegram_service()
+            await telegram_service.send_notification(f"⏰ <b>RAPPEL MINUTEUR</b>\n\n{message_rappel}")
+            
+        # 2. On lance la tâche en arrière-plan (cela ne bloque pas le script principal)
+        asyncio.create_task(alerte_en_arriere_plan())
+        
+        return f"Succès. Le minuteur est lancé. L'utilisateur sera rappelé de '{message_rappel}' dans {delai_minutes} minutes."
+        
+    except Exception as e:
+        logger.error(f"Échec de l'outil programmer_alerte : {e}", exc_info=True)
+        return "Erreur technique lors de la programmation du rappel."

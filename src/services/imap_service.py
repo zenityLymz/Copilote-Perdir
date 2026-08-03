@@ -9,7 +9,7 @@ from typing import List, Optional
 from src.core.models import MailObject, TriDecision
 from src.core.exceptions import IMAPError
 from src.core.config import get_settings
-from src.utils import get_logger
+from src.utils import get_logger, extract_email_address, clean_html_content, estimate_token_count
 
 from email.message import EmailMessage
 import time
@@ -306,7 +306,11 @@ class IMAPService:
                 msg = email.message_from_bytes(response_part[1], policy=policy.default)
                 
                 sujet = str(msg.get('subject', '(Sans objet)'))
-                expediteur = str(msg.get('from', '(Expéditeur inconnu)'))
+                
+                # Nettoyage de l'expéditeur
+                raw_expediteur = str(msg.get('from', ''))
+                extracted_email = extract_email_address(raw_expediteur)
+                expediteur = extracted_email if extracted_email else '(Expéditeur inconnu)'
                 
                 # Parsing robuste de la date
                 date_tuple = email.utils.parsedate_tz(msg.get('date'))
@@ -329,27 +333,46 @@ class IMAPService:
                             filename = part.get_filename()
                             if filename:
                                 pieces_jointes.append(filename)
-                        elif content_type == "text/plain" and "attachment" not in content_disposition:
+                        
+                        # --- Prise en charge et nettoyage du HTML ---
+                        elif content_type in ["text/plain", "text/html"] and "attachment" not in content_disposition:
                             try:
-                                contenu_texte += part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
+                                raw_text = part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
+                                if content_type == "text/html":
+                                    contenu_texte += clean_html_content(raw_text) + "\n"
+                                else:
+                                    contenu_texte += raw_text + "\n"
                             except Exception:
                                 pass
                 else:
                     try:
-                        contenu_texte = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
+                        raw_payload = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
+                        # --- Nettoyage si le message unique est du HTML ---
+                        if msg.get_content_type() == "text/html":
+                            contenu_texte = clean_html_content(raw_payload)
+                        else:
+                            contenu_texte = raw_payload
                     except Exception:
                         contenu_texte = str(msg.get_payload())
+
+                # Nettoyage final du texte
+                contenu_final = contenu_texte.strip() or "(Contenu vide ou illisible)"
+                
+                # --- Estimation des tokens ---
+                nb_tokens = estimate_token_count(contenu_final)
 
                 # Gestion sécurisée du décodage de l'ID IMAP
                 id_str = mail_id.decode('utf-8') if isinstance(mail_id, bytes) else str(mail_id)
 
+                # Instanciation de l'objet métier avec le nombre de tokens intégré
                 return MailObject(
                     id_mail=id_str,
                     date_reception=date_reception,
                     expediteur=expediteur,
                     sujet=sujet,
-                    contenu_texte=contenu_texte.strip() or "(Contenu vide ou illisible)",
-                    pieces_jointes=pieces_jointes
+                    contenu_texte=contenu_final,
+                    pieces_jointes=pieces_jointes,
+                    nombre_tokens=nb_tokens
                 )
                 
         # Si la boucle se termine sans rien trouver

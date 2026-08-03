@@ -31,6 +31,8 @@ from src.core.dependencies import set_chroma_service
 from src.services.google_drive_api import GoogleDriveService
 from src.core.dependencies import set_drive_service
 
+from src.core.dependencies import set_telegram_service
+
 # 1. Chargement explicite des variables d'environnement depuis le fichier .env
 load_dotenv()
 
@@ -78,6 +80,7 @@ async def main():
         
         logger.info("Initialisation du Service Telegram...")
         telegram_service = TelegramBotService()
+        set_telegram_service(telegram_service)  # On l'enregistre dans le registre mondial
         
         # 4. Instanciation du Pipeline (Le Chef d'Orchestre)
         logger.info("Câblage du Pipeline B...")
@@ -361,8 +364,8 @@ from src.prompts.orchestrator_prompts import (
 
 # Importation de tous les outils (Function Calling) mis à disposition de l'IA
 from src.tools import (
-    creer_evenement_agenda, 
-    creer_tache, 
+    gerer_agenda, 
+    gerer_taches,
     programmer_alerte, 
     preparer_brouillon_main_courante,
     sauvegarder_main_courante_validee,
@@ -411,8 +414,8 @@ class OrchestratorAgent:
             List[Callable]: Les références aux fonctions utilisables via le Function Calling.
         """
         return [
-            creer_evenement_agenda,
-            creer_tache,
+            gerer_agenda,
+            gerer_taches,
             programmer_alerte,
             preparer_brouillon_main_courante,
             sauvegarder_main_courante_validee,
@@ -496,35 +499,6 @@ class OrchestratorAgent:
                 "⚠️ Excusez-moi, j'ai rencontré une défaillance technique en essayant "
                 "de traiter votre demande. Les services pourraient être temporairement indisponibles."
             )
-
-
-============================================================
---- FICHIER : src/agents/rag_agent.py ---
-============================================================
-
-from typing import List, Dict, Any, Optional
-from google import genai
-
-from src.core.config import get_settings
-from src.utils.logger import get_logger
-
-logger = get_logger(__name__)
-
-class RAGAgent:
-    """
-    Agent IA spécialisé dans la génération de réponses augmentées par la recherche (RAG).
-    Il prend une question en langage naturel et les documents pertinents issus 
-    de la base vectorielle ChromaDB pour formuler une réponse précise.
-    """
-
-    def __init__(self, api_key: str, model_name: Optional[str] = None) -> None:
-        pass
-
-    async def generate_answer(self, query: str, retrieved_context: List[Dict[str, Any]]) -> str:
-        """
-        Génère une réponse à la question de l'utilisateur en se basant *uniquement* sur le contexte fourni de manière asynchrone.
-        """
-        pass
 
 
 ============================================================
@@ -709,7 +683,6 @@ spécialité métier distincte et utilise des prompts spécifiques.
 """
 
 from .triage_agent import TriageAgent
-from .rag_agent import RAGAgent
 from .synth_agent import SynthAgent
 from .orchestrator_agent import OrchestratorAgent
 from .briefing_agent import BriefingAgent
@@ -798,12 +771,14 @@ if TYPE_CHECKING:
     from src.services.imap_service import IMAPService
     from src.services.chroma_service import ChromaDBService
     from src.services.google_drive_api import GoogleDriveService
+    from src.services.telegram_bot import TelegramBotService
 
 # L'astuce est de mettre le nom du type entre guillemets ('IMAPService') 
 # car la classe n'est pas "réellement" importée à l'exécution.
 _imap_service: Optional['IMAPService'] = None
 _chroma_service: Optional['ChromaDBService'] = None
 _drive_service: Optional['GoogleDriveService'] = None
+_telegram_service: Optional['TelegramBotService'] = None
 
 # --- Service IMAP ---
 def get_imap_service() -> IMAPService:
@@ -834,6 +809,16 @@ def get_drive_service() -> GoogleDriveService:
 def set_drive_service(service: GoogleDriveService) -> None:
     global _drive_service
     _drive_service = service
+
+# --- Service Telegram ---
+def get_telegram_service() -> TelegramBotService:
+    if _telegram_service is None:
+        raise RuntimeError("Le service Telegram n'a pas été initialisé dans le registre.")
+    return _telegram_service
+
+def set_telegram_service(service: TelegramBotService) -> None:
+    global _telegram_service
+    _telegram_service = service
 
 
 ============================================================
@@ -1079,7 +1064,9 @@ from .dependencies import (
     get_chroma_service,
     set_chroma_service,
     get_drive_service,
-    set_drive_service
+    set_drive_service,
+    get_telegram_service,
+    set_telegram_service
 )
 
 # --- Configuration ---
@@ -1307,25 +1294,41 @@ def get_orchestrator_system_prompt() -> str:
     Returns:
         str: Le prompt système complet.
     """
-    return """Tu es "Loustic", le "Copilote" IA exclusif et proactif d'un Chef d'Établissement (Perdir) de l'Éducation Nationale française qui s'appelle Hugo.
+    return """Tu es le "Copilote" IA exclusif et proactif d'un Chef d'Établissement (Perdir) de l'Éducation Nationale française qui s'appelle Hugo JANIN.
 Ton objectif principal est d'alléger sa charge mentale au quotidien en organisant l'information et en exécutant des tâches administratives.
 
+
 RÈGLES DE COMPORTEMENT STRICTES :
+1. INTERLOCUTEUR UNIQUE : Tu es la seule interface. Tes réponses doivent être naturelles, humaines et masquer la complexité technique des outils sous-jacents.
+2. TON ET STYLE : Sois professionnel, courtois, clair et extrêmement concis. Le Perdir manque de temps, va directement à l'essentiel. Toutefois, tu peux être chaleureux, sympathique et empathique si la situation le justifie. Évite les phrases longues et les digressions inutiles.
+3. RAISONNEMENT ET CLARIFICATION : Si un paramètre indispensable manque pour utiliser un outil (ex: l'heure exacte d'un RDV, le destinataire d'un mail), NE DEVINE JAMAIS. Pose une question courte et directe à l'utilisateur avant d'agir.
+4. CONTEXTE : Appuie-toi toujours sur l'historique récent de la conversation pour comprendre les sous-entendus.
+5. GESTION DES ÉCHECS : Si un outil échoue, excuse-toi poliment et explique brièvement le problème. Tu ne peux pas "réessayer plus tard" de toi-même, demande à l'utilisateur de te relancer plus tard s'il le souhaite.
 
-1. INTERLOCUTEUR UNIQUE : Tu es la seule interface entre le système technique et le chef d'établissement. Tes réponses doivent être naturelles, humaines et masquer la complexité technique des outils sous-jacents.
-2. TON ET STYLE : Sois toujours professionnel, courtois, clair et extrêmement concis. Le Perdir manque de temps, va directement à l'essentiel.
-3. BOÎTE À OUTILS (FUNCTION CALLING) : Tu disposes d'outils pour lire des documents, chercher des e-mails, gérer l'agenda et créer des brouillons. Utilise-les de manière autonome dès que cela est pertinent pour répondre à la demande.
-4. RAISONNEMENT ET CLARIFICATION : Si l'utilisateur te donne un ordre (ex: "Mets un rendez-vous avec le maire demain") mais qu'il manque un paramètre essentiel pour utiliser ton outil (ex: l'heure exacte), NE DEVINE JAMAIS. Pose une question courte et directe à l'utilisateur pour obtenir l'information manquante avant d'agir.
-5. CONTEXTE ET MÉMOIRE : Appuie-toi sur l'historique récent de la conversation pour comprendre les sous-entendus.
-6. GESTION DES ÉCHECS : Si un outil technique échoue ou si tu n'as pas accès à une information, excuse-toi poliment, explique brièvement le problème et propose éventuellement une alternative. N'invente jamais d'informations (zéro hallucination).
-7. VALIDATION DE LA MAIN COURANTE : La procédure de main courante se fait strictement en deux étapes.
-- Étape 1 : Tu génères le brouillon avec l'outil de préparation et tu demandes validation.
-- Étape 2 : DÈS QUE l'utilisateur valide (ex: "oui", "c'est bon", "je valide"), tu as l'OBLIGATION ABSOLUE d'appeler l'outil `sauvegarder_main_courante_validee` pour inscrire physiquement le texte dans le registre. Ne dis pas que c'est fait sans avoir appelé cet outil et que cet outil ait confirmé le succès de l'opération (True).
-HONNÊTETÉ SUR TES CAPACITÉS (PAS DE FAUSSES PROMESSES) :
-- Tu ne fonctionnes qu'en réaction immédiate aux messages de l'utilisateur. Tu n'as PAS la capacité de programmer des tâches en arrière-plan, de mettre un rappel interne, ou de "réessayer plus tard" tout seul.
-- Par conséquent, si un outil échoue à cause d'un problème technique, dis-le clairement, mais ne propose JAMAIS de réessayer plus tard par toi-même. Demande plutôt à l'utilisateur de te relancer plus tard s'il le souhaite ou d'aller consulter les logs si l'erreur persiste.
+TA BOÎTE À OUTILS (INSTRUCTIONS D'UTILISATION) :
+Tu disposes de plusieurs outils techniques. Tu dois choisir de façon autonome le ou les outils pertinents selon la demande. Voici ton guide d'utilisation strict :
 
-FORMATAGE STRICT (HTML TELEGRAM) : 
+A. PLANIFICATION ET AGENDA :
+- Événement d'agenda (`gerer_agenda`) : UNIQUEMENT pour les rendez-vous, réunions ou moments bloquant un créneau avec heure de début et fin. (Ex : "Ajoute un rendez-vous avec l'inspecteur le 15/09 de 14h à 15h", "Modifie mon rendez-vous du 20/09 à 10h pour le mettre à 11h", "Supprime mon rendez-vous du 25/09 avec le parent Dupont", "Qu'est-ce que j'ai dans mon agenda demain après-midi ?").
+- Tâche (`gerer_taches`) : Pour les "choses à faire" (To-Do List) (ex: "Rappelle-moi de vérifier les notes de service", "Ajoute une tâche pour préparer le compte-rendu", "Qu'est-ce que j'ai dans ma to-do list cette semaine ?").
+- Minuteur (`programmer_alerte`) : UNIQUEMENT pour les rappels à très court terme, dans la journée("A 14h, rappelle-moi de faire...", "Mets-moi un rappel dans 1h concernant...").
+
+B. GESTION DES E-MAILS :
+- `generer_briefing_emails` : Utilise cet outil pour faire un point global ou un résumé des messages récents/non lus (ex: "Fais-moi un point sur mes mails", "Quoi de neuf ce matin ?").
+- `rechercher_dans_les_emails` : Utilise cet outil pour chercher une information précise dans l'ensemble des mails (ex: "Retrouve le mail de l'inspection sur le protocole", "Que dit le rectorat à propos du budget ?").
+  ATTENTION - Règles obligatoires pour cet outil :
+  1. EXPANSION DE REQUÊTE : Si l'utilisateur te parle d'un expéditeur en particulier, ne cherche pas simplement des adresses e-mail exactes. Fournis des mots-clés, des synonymes et des rôles dans la `requete_semantique` (ex: pour "Dasen", cherche "Directeur académique, DASEN, cabinet, direction").
+  2. CALCUL TEMPOREL : Utilise la date actuelle (fournie dans ton contexte) pour calculer de tête une fenêtre temporelle large si l'utilisateur utilise des termes vagues. Par exemple, pour "il y a deux mois", définis une `date_debut` et une `date_fin` encadrant largement cette période (au format ISO 8601).
+  3. FILTRE EXPÉDITEUR : Si l'utilisateur mentionne un expéditeur particulier dont tu ignores le nom ou le mail exact, utilise d'abord l'outil rechercher_document_drive pour lire le fichier d'annuaire de l'établissement. Une fois le nom ou l'adresse trouvée, utilise le paramètre expediteur pour un filtrage ultra-précis. Si tu ne trouves rien dans l'annuaire mais que tu as un nom ou une adresse partielle (ex : ....infirmerie...), tu veux quand même renseigner le paramètre optionnel `expediteur` pour cibler la recherche car il n'y a pas besoin de l'adresse e-mail exacte (mais un élément contenu dans l'adresse suffit). Si tu n'as rien, laisse le paramètre `expediteur` vide.
+  - `enregistrer_brouillon_mail` : Pour enregistrer un brouillon d'e-mail dans le dossier Brouillons de la messagerie de l'utilisateur. Pour rédiger ce mail, tu dois t'appuyer sur les informations que tu as et en rechercher au préalable s'il t'en manque (avec `rechercher_dans_les_emails` ou `rechercher_document_drive` ou `gerer_agenda` ou, si nécessaire et en dernier recours en demandant des précisions à l'utilisateur).
+
+C. GESTION DOCUMENTAIRE ET INCIDENTS :
+- `rechercher_info_drive` : Pour fouiller dans les fichiers, notes, PDF et comptes-rendus stockés sur le Google Drive qui est le lieu de stockage officiel de tous les documents du chef d'établissement.
+- La Main Courante : c'est un journal officiel de bord où le chef d'établissement consigne les incidents et événements importants pour lesquels le chef d'établissement est susceptible de devoir rendre des comptes (à la hiérarchie, la police ou la justice). Tu dois gérer la Main Courante avec une procédure stricte en 2 étapes :
+  -> Étape 1 : Génère la nouvelle entrée avec `preparer_brouillon_main_courante` et demande systématiquement validation à l'utilisateur.
+  -> Étape 2 : DÈS QUE l'utilisateur valide le brouillon présenté, tu as l'OBLIGATION ABSOLUE d'appeler `sauvegarder_main_courante_validee` pour inscrire physiquement le texte. Ne dis jamais que c'est fait sans avoir appelé ce deuxième outil et qu'il t'ait confirmé le succès de l'opération.
+
+FORMATAGE STRICT (HTML TELEGRAM) pour communiquer avec le chef d'établissement : 
 - Tu dois IMPÉRATIVEMENT utiliser les balises HTML compatibles Telegram pour formater ton texte : <b>pour le gras</b>, <i>pour l'italique</i>, <u>pour le souligné</u>.
 - N'utilise JAMAIS de Markdown (comme **gras**, *italique*, ou # Titre).
 - Pour faire des listes, utilise simplement un tiret (-) ou une puce (•) en début de ligne, sans balise HTML de liste.
@@ -1375,38 +1378,6 @@ def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[st
     )
     
     return prompt
-
-
-============================================================
---- FICHIER : src/prompts/rag_prompts.py ---
-============================================================
-
-from typing import List
-
-def get_rag_system_prompt() -> str:
-    """
-    Génère le prompt système définissant les règles de réponse de l'agent RAG[cite: 42].
-    Impose au modèle de ne répondre qu'avec le contexte fourni pour éviter 
-    les hallucinations.
-    
-    Returns:
-        str: Le prompt système strict pour le RAG.
-    """
-    pass
-
-def build_rag_qa_prompt(user_query: str, retrieved_context: List[str]) -> str:
-    """
-    Construit le prompt de question-réponse combinant la demande de l'utilisateur
-    et le contexte pertinent retrouvé par sémantique dans ChromaDB.
-    
-    Args:
-        user_query (str): La requête en langage naturel du chef d'établissement.
-        retrieved_context (List[str]): Les fragments de texte extraits de la base locale.
-        
-    Returns:
-        str: Le prompt formaté intégrant la question et le contexte d'appui.
-    """
-    pass
 
 
 ============================================================
@@ -1544,10 +1515,6 @@ et l'ajustement du comportement des modèles de langage.
 from .triage_prompts import (
     get_triage_system_prompt,
     build_mail_evaluation_prompt
-)
-from .rag_prompts import (
-    get_rag_system_prompt,
-    build_rag_qa_prompt
 )
 from .synth_prompts import (
     get_pilotage_system_prompt,
@@ -1771,9 +1738,9 @@ class ChromaDBService:
 ============================================================
 
 import asyncio
-from datetime import timedelta
-from urllib.parse import urlencode
-from typing import Any
+from datetime import datetime, timedelta
+import pytz
+from typing import Any, List, Dict, Optional
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -1781,117 +1748,261 @@ from googleapiclient.discovery import build
 from src.core import AgendaTaskRequest, GoogleAPIError
 from src.utils import get_logger
 
-# Initialisation du logger pour ce module
 logger = get_logger(__name__)
 
 class GoogleCalendarTasksService:
     """
-    Gère les interactions avec Google Tasks et Google Calendar pour la création
-    de rappels et d'événements extraits par l'IA.
+    Gère les interactions avec Google Calendar (et Google Tasks) pour l'Agent IA.
     """
 
     def __init__(self, drive_service: Any) -> None:
-        """
-        Initialise le service en réutilisant l'authentification OAuth globale.
-
-        Args:
-            drive_service (Any): Instance authentifiée partageant les credentials.
-        """
         self.drive_service = drive_service
-        # On extrait le chemin vers token.json porté par le service Drive, 
-        # sinon on prend la valeur par défaut
         self.token_path = getattr(drive_service, 'token_path', 'token.json')
-        
-        
+        self.timezone = pytz.timezone("Europe/Paris")
         logger.debug("GoogleCalendarTasksService initialisé.")
 
-    async def create_google_task(self, request: AgendaTaskRequest) -> str:
-        """
-        Crée une nouvelle tâche directement dans le Google Tasks de l'utilisateur.
-        Exécuté de manière asynchrone pour ne pas bloquer le bot.
-
-        Args:
-            request (AgendaTaskRequest): L'objet contenant le titre, la date limite et les notes.
-
-        Returns:
-            str: L'ID de la tâche créée.
-        """
-        return await asyncio.to_thread(self._create_google_task_sync, request)
-
-    def _create_google_task_sync(self, request: AgendaTaskRequest) -> str:
-        """
-        Logique synchrone de création de tâche, exécutée dans un thread séparé.
-        """
+    def _get_calendar_service(self):
+        """Utilitaire pour instancier le client API Calendar."""
         try:
-            logger.debug(f"Tentative de création d'une tâche Tasks : {request.titre}")
-            
-            # Récupération des accès via le fichier généré par le service Drive
             creds = Credentials.from_authorized_user_file(self.token_path)
-            
-            # Instanciation du client Tasks API
-            service = build('tasks', 'v1', credentials=creds)
-            
-            # Préparation du payload
-            task_body = {
-                'title': request.titre,
-            }
-            
-            if request.description:
-                task_body['notes'] = request.description
-                
-            if request.date_cible:
-                # L'API Google Tasks exige le format RFC 3339 pour la date d'échéance
-                task_body['due'] = request.date_cible.isoformat() + 'Z'
-                
-            # Appel à l'API Google dans la liste de tâches par défaut
-            result = service.tasks().insert(tasklist='@default', body=task_body).execute()
-            
-            task_id = result.get('id')
-            logger.info(f"Tâche Google Tasks créée avec succès (ID: {task_id}).")
-            return task_id
-            
+            return build('calendar', 'v3', credentials=creds)
         except Exception as e:
-            logger.error(f"Erreur lors de la création de la tâche Google Tasks : {e}")
-            raise GoogleAPIError(f"Création de la tâche échouée : {e}")
+            logger.error(f"Impossible de construire le service Google Calendar : {e}")
+            raise GoogleAPIError(f"Erreur d'authentification Agenda : {e}")
 
-    def generate_calendar_link(self, request: AgendaTaskRequest) -> str:
-        """
-        Ne crée pas l'événement d'autorité, mais génère un lien URL d'insertion
-        pré-rempli que le chef d'établissement pourra valider manuellement.
+    # ==========================================
+    # --- MÉTHODES GOOGLE CALENDAR (AGENDA) ---
+    # ==========================================
 
-        Args:
-            request (AgendaTaskRequest): Les paramètres de l'événement (Titre, date, description).
+    async def list_calendar_events(self, date_cible: datetime, date_fin: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """Récupère les événements d'une journée ou d'une période spécifique."""
+        return await asyncio.to_thread(self._list_calendar_events_sync, date_cible, date_fin)
 
-        Returns:
-            str: Une URL cliquable formatée (ex: https://calendar.google.com/calendar/render?action=TEMPLATE...).
-        """
-        base_url = "https://calendar.google.com/calendar/render"
+    def _list_calendar_events_sync(self, date_cible: datetime, date_fin: Optional[datetime]) -> List[Dict[str, Any]]:
+        service = self._get_calendar_service()
         
-        params = {
-            'action': 'TEMPLATE',
-            'text': request.titre,
+        # Début de la période (00:00:00)
+        start_of_day = date_cible.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Fin de la période (23:59:59 du jour cible ou du jour de fin)
+        end_date = date_fin if date_fin else date_cible
+        end_of_day = end_date.replace(hour=23, minute=59, second=59, microsecond=0)
+        
+        time_min = self.timezone.localize(start_of_day).isoformat()
+        time_max = self.timezone.localize(end_of_day).isoformat()
+
+        try:
+            events_result = service.events().list(
+                calendarId='primary', 
+                timeMin=time_min,
+                timeMax=time_max, 
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+            
+            return events_result.get('items', [])
+        except Exception as e:
+            logger.error(f"Erreur lors de la lecture de l'agenda : {e}")
+            raise GoogleAPIError(f"Lecture agenda échouée : {e}")
+
+    async def create_calendar_event(self, request: AgendaTaskRequest, duree_minutes: int, lieu: Optional[str] = None) -> Dict[str, str]:
+        """Crée un événement avec gestion du lieu."""
+        return await asyncio.to_thread(self._create_calendar_event_sync, request, duree_minutes, lieu)
+
+    def _create_calendar_event_sync(self, request: AgendaTaskRequest, duree_minutes: int, lieu: Optional[str]) -> Dict[str, str]:
+        service = self._get_calendar_service()
+        
+        start_dt = self.timezone.localize(request.date_cible)
+        end_dt = start_dt + timedelta(minutes=duree_minutes)
+        
+        event_body = {
+            'summary': request.titre,
+            'description': request.description or "",
+            'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Europe/Paris'},
+            'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Europe/Paris'}
         }
         
-        if request.description:
-            params['details'] = request.description
+        # Ajout du lieu s'il est spécifié (Google Calendar fera le lien Maps automatiquement)
+        if lieu:
+            event_body['location'] = lieu
             
-        if request.date_cible:
-            # On génère un créneau d'1 heure par défaut à partir de la date ciblée
-            start_dt = request.date_cible
-            end_dt = start_dt + timedelta(hours=1)
-            
-            # Format attendu par Google Calendar : YYYYMMDDTHHMMSS 
-            # (Sans le 'Z' à la fin, l'événement utilisera automatiquement le fuseau horaire de l'utilisateur)
-            start_str = start_dt.strftime("%Y%m%dT%H%M%S")
-            end_str = end_dt.strftime("%Y%m%dT%H%M%S")
-            params['dates'] = f"{start_str}/{end_str}"
-            
-        # Encodage sécurisé de l'URL
-        query_string = urlencode(params)
-        link = f"{base_url}?{query_string}"
+        try:
+            event = service.events().insert(calendarId='primary', body=event_body).execute()
+            logger.info(f"Événement créé avec succès (ID: {event.get('id')}).")
+            return {"id": event.get('id'), "link": event.get('htmlLink')}
+        except Exception as e:
+            logger.error(f"Erreur lors de la création de l'événement : {e}")
+            raise GoogleAPIError(f"Création événement échouée : {e}")
+
+    async def delete_calendar_event(self, event_id: str) -> bool:
+        """Supprime un événement via son ID."""
+        return await asyncio.to_thread(self._delete_calendar_event_sync, event_id)
+
+    def _delete_calendar_event_sync(self, event_id: str) -> bool:
+        service = self._get_calendar_service()
+        try:
+            service.events().delete(calendarId='primary', eventId=event_id).execute()
+            logger.info(f"Événement {event_id} supprimé avec succès.")
+            return True
+        except Exception as e:
+            logger.error(f"Erreur lors de la suppression de l'événement {event_id}: {e}")
+            return False
+
+    async def modify_calendar_event(self, event_id: str, new_date: Optional[datetime] = None, new_title: Optional[str] = None, duree_minutes: Optional[int] = None, lieu: Optional[str] = None, description: Optional[str] = None) -> str:
+        """Met à jour partiellement (PATCH) un événement existant."""
+        return await asyncio.to_thread(self._modify_calendar_event_sync, event_id, new_date, new_title, duree_minutes, lieu, description)
+
+    def _modify_calendar_event_sync(self, event_id: str, new_date: Optional[datetime], new_title: Optional[str], duree_minutes: Optional[int], lieu: Optional[str], description: Optional[str]) -> str:
+        service = self._get_calendar_service()
         
-        logger.info(f"Lien Google Calendar généré avec succès pour : '{request.titre}'.")
-        return link
+        try:
+            # On récupère l'événement existant
+            event = service.events().get(calendarId='primary', eventId=event_id).execute()
+            
+            # Utilisation de "is not None" pour permettre d'effacer un champ en envoyant "" (chaîne vide)
+            if new_title is not None:
+                event['summary'] = new_title
+            
+            if lieu is not None:
+                event['location'] = lieu
+                
+            if description is not None:
+                event['description'] = description
+                
+            if new_date is not None:
+                start_dt = self.timezone.localize(new_date)
+                if not duree_minutes:
+                    # On recalcule l'ancienne durée pour la conserver si non modifiée
+                    old_start = datetime.fromisoformat(event['start'].get('dateTime'))
+                    old_end = datetime.fromisoformat(event['end'].get('dateTime'))
+                    duree_minutes = int((old_end - old_start).total_seconds() / 60)
+                    
+                end_dt = start_dt + timedelta(minutes=duree_minutes)
+                
+                event['start'] = {'dateTime': start_dt.isoformat(), 'timeZone': 'Europe/Paris'}
+                event['end'] = {'dateTime': end_dt.isoformat(), 'timeZone': 'Europe/Paris'}
+                
+            updated_event = service.events().update(calendarId='primary', eventId=event_id, body=event).execute()
+            logger.info(f"Événement {event_id} modifié avec succès.")
+            return updated_event.get('htmlLink')
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la modification de l'événement {event_id}: {e}")
+            raise GoogleAPIError(f"Modification événement échouée : {e}")
+        
+    # ==========================================
+    # --- MÉTHODES GOOGLE TASKS (TÂCHES) ---
+    # ==========================================
+
+    def _get_tasks_service(self):
+        """Utilitaire pour instancier le client API Tasks."""
+        try:
+            creds = Credentials.from_authorized_user_file(self.token_path)
+            return build('tasks', 'v1', credentials=creds)
+        except Exception as e:
+            logger.error(f"Impossible de construire le service Google Tasks : {e}")
+            raise GoogleAPIError(f"Erreur d'authentification Tasks : {e}")
+
+    async def list_google_tasks(self, include_completed: bool = False) -> List[Dict[str, Any]]:
+        """Récupère la liste des tâches (par défaut, uniquement celles non terminées)."""
+        return await asyncio.to_thread(self._list_google_tasks_sync, include_completed)
+
+    def _list_google_tasks_sync(self, include_completed: bool) -> List[Dict[str, Any]]:
+        service = self._get_tasks_service()
+        try:
+            # Récupère les tâches de la liste par défaut de l'utilisateur
+            results = service.tasks().list(
+                tasklist='@default', 
+                showCompleted=include_completed,
+                showHidden=False
+            ).execute()
+            return results.get('items', [])
+        except Exception as e:
+            logger.error(f"Erreur lors de la lecture des tâches : {e}")
+            raise GoogleAPIError(f"Lecture des tâches échouée : {e}")
+
+    async def create_google_task(self, titre: str, date_cible: Optional[datetime] = None, description: Optional[str] = None) -> str:
+        """Crée une nouvelle tâche et retourne son ID."""
+        return await asyncio.to_thread(self._create_google_task_sync, titre, date_cible, description)
+
+    def _create_google_task_sync(self, titre: str, date_cible: Optional[datetime], description: Optional[str]) -> str:
+        service = self._get_tasks_service()
+        
+        task_body = {'title': titre}
+        if description:
+            task_body['notes'] = description
+        if date_cible:
+            # Tasks API attend le format RFC3339
+            task_body['due'] = date_cible.isoformat() + 'Z'
+            
+        try:
+            result = service.tasks().insert(tasklist='@default', body=task_body).execute()
+            logger.info(f"Tâche Google Tasks créée (ID: {result.get('id')}).")
+            return result.get('id')
+        except Exception as e:
+            logger.error(f"Erreur lors de la création de la tâche Tasks : {e}")
+            raise GoogleAPIError(f"Création de la tâche échouée : {e}")
+
+    async def complete_google_task(self, task_id: str) -> bool:
+        """Marque une tâche comme 'terminée' (cochée)."""
+        return await asyncio.to_thread(self._complete_google_task_sync, task_id)
+
+    def _complete_google_task_sync(self, task_id: str) -> bool:
+        service = self._get_tasks_service()
+        try:
+            # Utilisation de PATCH pour ne modifier que le statut sans écraser le reste
+            service.tasks().patch(
+                tasklist='@default', 
+                task=task_id, 
+                body={'status': 'completed'}
+            ).execute()
+            logger.info(f"Tâche {task_id} marquée comme terminée.")
+            return True
+        except Exception as e:
+            logger.error(f"Erreur lors de la validation de la tâche {task_id}: {e}")
+            raise GoogleAPIError(f"Validation de la tâche échouée : {e}")
+
+    async def delete_google_task(self, task_id: str) -> bool:
+        """Supprime définitivement une tâche."""
+        return await asyncio.to_thread(self._delete_google_task_sync, task_id)
+
+    def _delete_google_task_sync(self, task_id: str) -> bool:
+        service = self._get_tasks_service()
+        try:
+            service.tasks().delete(tasklist='@default', task=task_id).execute()
+            logger.info(f"Tâche {task_id} supprimée avec succès.")
+            return True
+        except Exception as e:
+            logger.error(f"Erreur lors de la suppression de la tâche {task_id}: {e}")
+            return False
+
+    async def modify_google_task(self, task_id: str, new_title: Optional[str] = None, new_due: Optional[datetime] = None, new_notes: Optional[str] = None) -> str:
+        """Met à jour une tâche existante (PATCH)."""
+        return await asyncio.to_thread(self._modify_google_task_sync, task_id, new_title, new_due, new_notes)
+
+    def _modify_google_task_sync(self, task_id: str, new_title: Optional[str], new_due: Optional[datetime], new_notes: Optional[str]) -> str:
+        service = self._get_tasks_service()
+        try:
+            # On récupère la tâche existante pour ne pas écraser les autres champs
+            task = service.tasks().get(tasklist='@default', task=task_id).execute()
+            
+            # Utilisation de "is not None" pour permettre d'effacer les notes en envoyant ""
+            if new_title is not None:
+                task['title'] = new_title
+                
+            if new_notes is not None:
+                task['notes'] = new_notes
+                
+            if new_due is not None:
+                # L'API Google nécessite un format RFC 3339 mais ignorera l'heure
+                task['due'] = new_due.isoformat() + 'Z'
+                
+            updated_task = service.tasks().update(tasklist='@default', task=task_id, body=task).execute()
+            logger.info(f"Tâche {task_id} modifiée avec succès.")
+            return updated_task.get('id')
+        except Exception as e:
+            logger.error(f"Erreur lors de la modification de la tâche {task_id}: {e}")
+            raise GoogleAPIError(f"Modification de la tâche échouée : {e}")
 
 
 ============================================================
@@ -1933,6 +2044,7 @@ class GoogleDriveService:
         self.token_path = token_path
         self.scopes = [
             'https://www.googleapis.com/auth/drive',
+            'https://www.googleapis.com/auth/calendar',
             'https://www.googleapis.com/auth/tasks'
         ]
         self.service = None
@@ -2658,7 +2770,8 @@ class TelegramBotService:
         # Fermeture de sécurité (Closure) identique à register_command
         async def secure_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             # Vérification de l'identité de l'expéditeur
-            if str(update.effective_user.id) != self._allowed_user_id:
+            # Le bot accepte si moi (en privé) OU si le message vient du GROUPE AUTORISÉ
+            if str(update.effective_user.id) != self._allowed_user_id and str(update.effective_chat.id) != "-100987654321":
                 logger.warning(
                     f"Tentative de message interceptée d'un utilisateur non autorisé "
                     f"({update.effective_user.id})."
@@ -2705,50 +2818,231 @@ from .google_calendar_tasks import GoogleCalendarTasksService
 --- FICHIER : src/tools/calendar_tools.py ---
 ============================================================
 
-from typing import Optional
+import asyncio
 from datetime import datetime
+from typing import Optional
+
 from src.utils import get_logger
+from src.core import AgendaTaskRequest, get_drive_service, get_telegram_service
+from src.services.google_calendar_tasks import GoogleCalendarTasksService
 
 # Initialisation du logger
 logger = get_logger(__name__)
 
-def creer_evenement_agenda(titre: str, date_heure_debut: str, duree_minutes: int, description: Optional[str] = None) -> bool:
+async def gerer_agenda(action: str, date_cible: Optional[str] = None, date_fin: Optional[str] = None, titre: Optional[str] = None, duree_minutes: Optional[int] = 60, event_id: Optional[str] = None, description: Optional[str] = None, lieu: Optional[str] = None) -> str:
     """
-    Crée un nouvel événement (rendez-vous, réunion) directement dans le Google Calendar 
-    du chef d'établissement.
+    Outil universel (Couteau Suisse) pour lire, créer, modifier ou supprimer 
+    des événements dans l'emploi du temps du chef d'établissement (Google Calendar).
     
-    ATTENTION: Ne pas deviner la date et l'heure. Si l'utilisateur n'a pas précisé 
-    le moment exact du rendez-vous, il faut l'interroger avant d'utiliser cet outil.
+    RÈGLES D'UTILISATION STRICTES :
+    - Concernant l'action "creer" (ou l'action "modifier" si la modification porte sur la date de début et/ou la durée) : tu DOIS toujours au préalable utiliser l'action "lire" pour récupérer les événements de la journée et vérifier 
+      les disponibilités à la date ciblée. Cela permet d'éviter les chevauchements (ou temps de trajet non pris en compte).
+    - N'invente jamais ni de date ni d'heure : si l'utilisateur dit "Cale un rdv demain", demande-lui à quelle heure, s'il dit "Cale un rdv à 14h", demande-lui à quelle date.
+    
+    - Concernant l'action "modifier" : pour conserver la valeur existante d'un champ lors d'une modification, ne fournis pas le paramètre. Pour effacer intentionnellement la valeur d'un champ existant, fournis une chaîne vide "".
+    - Cet outil ne gère QUE les rendez-vous, réunions et événements bloquant un créneau horaire. Il NE GÈRE PAS les tâches simples à cocher (utiliser l'outil des tâches pour cela).
 
     Args:
-        titre (str): Le nom de l'événement (ex: "Réunion Mairie", "Entretien Parent Dupont").
-        date_heure_debut (str): La date et l'heure de début au format ISO 8601 (ex: "2026-07-31T14:00:00").
-        duree_minutes (int): La durée estimée de l'événement en minutes (ex: 60, 90). Par défaut, estimer logiquement.
-        description (Optional[str]): Informations complémentaires, ordre du jour ou lieu de la réunion.
+        action (str): L'action à effectuer. Doit être STRICTEMENT l'une de ces valeurs : "lire", "creer", "modifier", "supprimer".
+        date_cible (Optional[str]): La date et l'heure ciblées au format ISO 8601 (ex: "2026-08-03T14:00:00"). Obligatoire pour "lire" et "creer".
+        date_fin (Optional[str]): Utilisé uniquement pour l'action "lire" si on souhaite récupérer les événements sur plusieurs jours (ex: lire de lundi à mercredi).
+        titre (Optional[str]): Le nom de l'événement. Requis pour "creer". Etre synthétique pour que cela reste lisible dans l'agenda (ex : "RDV Maire" et pas "Rendez-vous avec le maire pour discuter du projet de réhabilitation de la cour de récréation").
+        duree_minutes (Optional[int]): La durée estimée en minutes. Par défaut 60.
+        event_id (Optional[str]): L'identifiant technique de l'événement. OBLIGATOIRE pour "modifier" et "supprimer" (obtenu préalablement via l'action "lire").
+        description (Optional[str]): Notes additionnelles ou ordre du jour.
+        lieu (Optional[str]): L'adresse physique ou la salle (ex: "Rectorat de Besançon", "Salle des profs").
 
     Returns:
-        bool: True si l'événement a été ajouté à l'agenda avec succès, False sinon.
+        str: Le résultat de l'opération, formaté pour que l'IA puisse le lire ou le transmettre.
     """
-    pass
-
-def creer_tache(titre: str, echeance: Optional[str] = None, details: Optional[str] = None) -> bool:
-    """
-    Ajoute une nouvelle tâche (To-Do) à réaliser dans l'outil Google Tasks du chef d'établissement.
+    logger.info(f"Outil 'gerer_agenda' appelé avec l'action : {action}")
     
-    Utiliser cet outil lorsque l'utilisateur exprime une action à faire à plus ou moins long terme, 
-    sans lui assigner un créneau horaire bloqué dans l'agenda (ex: "Penser à valider les HSE des profs").
+    try:
+        drive_service = get_drive_service()
+        calendar_service = GoogleCalendarTasksService(drive_service)
+        
+        # 1. ACTION : LIRE (CONSULTER L'AGENDA)
+        if action == "lire":
+            if not date_cible:
+                return "Erreur : le paramètre 'date_cible' est obligatoire pour lire l'agenda."
+            
+            dt_cible = datetime.fromisoformat(date_cible)
+            dt_fin = datetime.fromisoformat(date_fin) if date_fin else None
+            
+            events = await calendar_service.list_calendar_events(dt_cible, dt_fin)
+            
+            période_texte = f"du {dt_cible.strftime('%d/%m/%Y')} au {dt_fin.strftime('%d/%m/%Y')}" if dt_fin else f"le {dt_cible.strftime('%d/%m/%Y')}"
+            
+            if not events:
+                return f"L'agenda est totalement vide pour la période demandée ({période_texte})."
+                
+            result = f"Voici les événements prévus {période_texte} :\n\n"
+            for ev in events:
+                start = ev['start'].get('dateTime', ev['start'].get('date'))
+                end = ev['end'].get('dateTime', ev['end'].get('date'))
+                ev_id = ev['id']
+                summary = ev.get('summary', 'Sans titre')
+                location = ev.get('location', 'Aucun lieu précisé')
+                
+                # Formatage plus lisible pour les événements sur plusieurs jours ou journée entière
+                is_all_day = 'T' not in start
+                if is_all_day:
+                    date_str = datetime.fromisoformat(start).strftime('%d/%m/%Y')
+                    horaire = f"{date_str} (Journée entière)"
+                else:
+                    dt_start = datetime.fromisoformat(start)
+                    dt_end = datetime.fromisoformat(end)
+                    if dt_start.date() == dt_end.date():
+                        horaire = f"{dt_start.strftime('%d/%m/%Y de %H:%M')} à {dt_end.strftime('%H:%M')}"
+                    else:
+                        horaire = f"Du {dt_start.strftime('%d/%m/%Y %H:%M')} au {dt_end.strftime('%d/%m/%Y %H:%M')}"
+                
+                result += f"- {horaire} : {summary} | Lieu : {location} | (ID technique: {ev_id})\n"
+                
+            return result
+            
+        # 2. ACTION : CRÉER UN ÉVÉNEMENT
+        elif action == "creer":
+            if not date_cible or not titre:
+                return "Erreur : 'date_cible' et 'titre' sont obligatoires pour créer un événement."
+                
+            dt_cible = datetime.fromisoformat(date_cible)
+            request = AgendaTaskRequest(
+                type_action="événement_google_calendar",
+                titre=titre,
+                date_cible=dt_cible,
+                description=description
+            )
+            
+            result = await calendar_service.create_calendar_event(request, duree_minutes, lieu)
+            return f"Succès. Événement créé. Lien d'accès : {result['link']}"
+            
+        # 3. ACTION : MODIFIER UN ÉVÉNEMENT
+        elif action == "modifier":
+            if not event_id:
+                return "Erreur : 'event_id' est obligatoire pour modifier un événement. Utilise l'action 'lire' d'abord pour le trouver."
+            
+            dt_cible = datetime.fromisoformat(date_cible) if date_cible else None
+            lien = await calendar_service.modify_calendar_event(event_id, dt_cible, titre, duree_minutes, lieu, description)
+            return f"Succès. L'événement a été mis à jour. Lien d'accès : {lien}"
+
+        # 4. ACTION : SUPPRIMER UN ÉVÉNEMENT
+        elif action == "supprimer":
+            if not event_id:
+                return "Erreur : 'event_id' est obligatoire pour supprimer. Utilise l'action 'lire' d'abord pour le trouver."
+                
+            succes = await calendar_service.delete_calendar_event(event_id)
+            if succes:
+                return "L'événement a été définitivement supprimé de l'agenda."
+            return "Échec de la suppression. L'ID fourni est peut-être invalide."
+            
+        else:
+            return f"Erreur : L'action '{action}' n'est pas reconnue."
+
+    except Exception as e:
+        logger.error(f"Échec de l'outil gerer_agenda : {e}", exc_info=True)
+        return "Erreur technique lors de l'interaction avec Google Calendar."
+
+async def gerer_taches(action: str, titre: Optional[str] = None, echeance: Optional[str] = None, details: Optional[str] = None, task_id: Optional[str] = None) -> str:
+    """
+    Outil universel (Couteau Suisse) pour lire, créer, valider ou supprimer 
+    les tâches à faire (To-Do List) du chef d'établissement dans Google Tasks.
+    
+    RÈGLES D'UTILISATION STRICTES :
+    Cet outil NE GÈRE PAS les rendez-vous, réunions ou événements avec une heure de début et de fin (utiliser gerer_agenda pour cela). 
+    Il gère les "choses à faire" (les tâches simples à cocher). Ces tâches n'ont pas d'heure de début, de fin ou de durée mais doivent être placée à une date donnée. Si la date n'est pas précisée, mettre la date du jour.
+    - Action "lire" : liste les tâches en cours. À utiliser systématiquement avant "valider" ou "supprimer" pour obtenir les 'task_id'.
+    - Action "modifier" : modifie le titre, la date ou les détails. Envoyer "" (chaîne vide) pour effacer les détails existants.
+    - Action "valider" : permet de cocher une tâche comme étant "Fait / Terminée".
+    - Action "supprimer" : supprime définitivement une tâche de la liste. À n'utiliser que sur demande de suppression explicite du perdir.
 
     Args:
-        titre (str): L'intitulé court et direct de l'action à réaliser.
-        echeance (Optional[str]): La date limite souhaitée au format ISO 8601 (ex: "2026-08-01"), si mentionnée.
+        action (str): L'action à effectuer. Doit être STRICTEMENT l'une de ces valeurs : "lire", "creer", "modifier", "valider", "supprimer".
+        titre (Optional[str]): L'intitulé court de l'action à réaliser. Requis pour "creer".
+        echeance (Optional[str]): la date au format ISO 8601.
         details (Optional[str]): Contexte supplémentaire ou notes d'exécution.
+        task_id (Optional[str]): L'identifiant technique de la tâche. OBLIGATOIRE pour "modifier", "valider" et "supprimer".
 
     Returns:
-        bool: True si la tâche a été insérée avec succès, False sinon.
+        str: Le résultat de l'opération ou la liste des tâches, formatée pour l'IA.
     """
-    pass
+    logger.info(f"Outil 'gerer_taches' appelé avec l'action : {action}")
+    
+    try:
+        drive_service = get_drive_service()
+        calendar_service = GoogleCalendarTasksService(drive_service)
+        
+        # 1. ACTION : LIRE (LISTER LES TÂCHES EN COURS)
+        if action == "lire":
+            tasks = await calendar_service.list_google_tasks(include_completed=False)
+            
+            if not tasks:
+                return "Excellente nouvelle : il n'y a actuellement aucune tâche en attente dans la To-Do list !"
+                
+            result = "Voici la liste des tâches en attente :\n\n"
+            for t in tasks:
+                t_id = t['id']
+                t_titre = t.get('title', 'Sans titre')
+                t_notes = t.get('notes', '')
+                t_due = t.get('due', '')
+                
+                # Formatage de l'échéance si présente
+                echeance_str = " (Pas d'échéance)"
+                if t_due:
+                    # Google Tasks renvoie ex: '2026-08-01T00:00:00.000Z'
+                    due_date = datetime.fromisoformat(t_due.replace('Z', '+00:00'))
+                    echeance_str = f" [Échéance: {due_date.strftime('%d/%m/%Y')}]"
+                
+                notes_str = f" - Notes: {t_notes}" if t_notes else ""
+                result += f"- {t_titre}{echeance_str}{notes_str} | (ID technique: {t_id})\n"
+                
+            return result
+            
+        # 2. ACTION : CRÉER UNE TÂCHE
+        elif action == "creer":
+            if not titre:
+                return "Erreur : le 'titre' est obligatoire pour créer une tâche."
+                
+            dt_echeance = datetime.fromisoformat(echeance) if echeance else None
+            await calendar_service.create_google_task(titre, dt_echeance, details)
+            return f"La tâche '{titre}' a bien été ajoutée à Google Tasks."
 
-def programmer_alerte(message_rappel: str, delai_minutes: int) -> bool:
+        # 3. ACTION : MODIFIER UNE TÂCHE
+        elif action == "modifier":
+            if not task_id:
+                return "Erreur : 'task_id' est obligatoire pour modifier. Utilise l'action 'lire' d'abord."
+            dt_echeance = datetime.fromisoformat(echeance) if echeance else None
+            await calendar_service.modify_google_task(task_id, titre, dt_echeance, details)
+            return "La tâche a bien été mise à jour."
+            
+        # 4. ACTION : VALIDER (COCHER) UNE TÂCHE
+        elif action == "valider":
+            if not task_id:
+                return "Erreur : 'task_id' est obligatoire pour valider une tâche. Utilise l'action 'lire' d'abord pour le trouver."
+            
+            await calendar_service.complete_google_task(task_id)
+            return "Félicitations, la tâche a été cochée et marquée comme terminée avec succès."
+
+        # 5. ACTION : SUPPRIMER UNE TÂCHE
+        elif action == "supprimer":
+            if not task_id:
+                return "Erreur : 'task_id' est obligatoire pour supprimer. Utilise l'action 'lire' d'abord pour le trouver."
+                
+            succes = await calendar_service.delete_google_task(task_id)
+            if succes:
+                return "La tâche a été définitivement supprimée de la liste."
+            return "Échec de la suppression. L'ID fourni est peut-être invalide."
+            
+        else:
+            return f"Erreur : L'action '{action}' n'est pas reconnue."
+
+    except Exception as e:
+        logger.error(f"Échec de l'outil gerer_taches : {e}", exc_info=True)
+        return "Erreur technique lors de l'interaction avec Google Tasks."
+
+
+
+async def programmer_alerte(message_rappel: str, delai_minutes: int) -> str:
     """
     Planifie l'envoi d'une notification Telegram (rappel) au chef d'établissement après 
     un temps donné.
@@ -2761,9 +3055,29 @@ def programmer_alerte(message_rappel: str, delai_minutes: int) -> bool:
         delai_minutes (int): Le nombre de minutes à attendre avant de déclencher l'alerte.
 
     Returns:
-        bool: True si le minuteur a été activé avec succès, False sinon.
+        str: Message confirmant l'activation du minuteur pour l'IA.
     """
-    pass
+    logger.info(f"Outil 'programmer_alerte' appelé : '{message_rappel}' dans {delai_minutes} minutes.")
+    
+    try:
+        delai_secondes = delai_minutes * 60
+        
+        # 1. On définit la fonction qui tournera en tâche de fond
+        async def alerte_en_arriere_plan():
+            await asyncio.sleep(delai_secondes)
+            logger.info(f"⏰ DRING ! Fin du minuteur. Envoi du message : {message_rappel}")
+            
+            telegram_service = get_telegram_service()
+            await telegram_service.send_notification(f"⏰ <b>RAPPEL MINUTEUR</b>\n\n{message_rappel}")
+            
+        # 2. On lance la tâche en arrière-plan (cela ne bloque pas le script principal)
+        asyncio.create_task(alerte_en_arriere_plan())
+        
+        return f"Succès. Le minuteur est lancé. L'utilisateur sera rappelé de '{message_rappel}' dans {delai_minutes} minutes."
+        
+    except Exception as e:
+        logger.error(f"Échec de l'outil programmer_alerte : {e}", exc_info=True)
+        return "Erreur technique lors de la programmation du rappel."
 
 
 ============================================================
@@ -2982,61 +3296,92 @@ from src.core import get_imap_service, get_chroma_service
 # Initialisation du logger
 logger = get_logger(__name__)
 
-async def rechercher_dans_les_emails(requete_semantique: str) -> str:
+async def rechercher_dans_les_emails(
+    requete_semantique: str, 
+    date_debut: Optional[str] = None, 
+    date_fin: Optional[str] = None,
+    expediteur: Optional[str] = None
+) -> str:
     """
     Interroge la mémoire vectorielle de l'établissement pour retrouver une information 
     précise dans la totalité des e-mails (récents ou anciens, lus ou non lus).
-    
-    ATTENTION POUR L'ORCHESTRATEUR : Utilise cet outil dès que le chef d'établissement 
+
+    ATTENTION POUR LE COPILOTE : Utilise cet outil dès que le chef d'établissement 
     te demande de "retrouver", "chercher" ou te pose une question sur un fait passé 
     ou une information contenue dans sa messagerie (ex: "Quelle est la date de la 
     prochaine réunion de bassin ?", "Retrouve le mail de l'inspecteur sur la réforme").
     Ne réponds jamais de mémoire, utilise toujours cet outil pour vérifier les faits.
+
     Même lorsque le chef d'établissement ne te pas demande explicitement de rechercher 
-    dans ses e-mails, mais que tu manques de contexte pour réaliser une action (trouver la 
-    date d'un rendez-vous ou le nom d'un parent pour créer ensuite un événement d'agenda ou une tâche), 
-    si tu soupçonnes que tu peux trouver des informations dans les e-mails, utilise cet outil 
-    pour récupérer des informations pertinentes.
+    dans ses e-mails, mais que tu manques de contexte pour réaliser une action, 
+    utilise cet outil pour récupérer des informations pertinentes.
+
     En revanche, quand le chef d'établissement te demande de résumer ou faire un point sur ses e-mails, 
-    c'est l'outil 'consulter_nouveaux_mails' qu'il faut utiliser, pas celui-ci. En effet, avec 'consulter_nouveaux_mails' 
-    tu pourras récupérer l'intégralité des e-mails non lus pour ensuite les résumer, 
-    alors que cet outil ne te donnera que des extraits pertinents relatifs à une question précise.
+    c'est l'outil 'generer_briefing_emails' qu'il faut utiliser, pas celui-ci.
 
     Args:
-        requete_semantique (str): La question exacte de l'utilisateur ou les concepts 
-                                  clés à rechercher, formulés en langage naturel clair 
-                                  (ex: "date réunion chefs établissement bassin").
+        requete_semantique (str): La question exacte de l'utilisateur ou les concepts clés enrichis.
+        date_debut (Optional[str]): Date de début de la fenêtre de recherche (format ISO 8601).
+        date_fin (Optional[str]): Date de fin de la fenêtre de recherche (format ISO 8601).
+        expediteur (Optional[str]): Le nom ou l'adresse e-mail (partielle ou complète) de l'expéditeur.
 
     Returns:
         str: Le contexte textuel reconstitué à partir des e-mails les plus pertinents, 
              ou un message clair si rien n'a été trouvé.
     """
     
-    logger.info(f"Outil 'rechercher_dans_les_emails' appelé avec la requête : '{requete_semantique}'")
+    logger.info(
+        f"Outil 'rechercher_dans_les_emails' appelé. Requête: '{requete_semantique}' | "
+        f"Expéditeur: '{expediteur}' | Période: {date_debut or 'Origine'} -> {date_fin or 'Aujourdhui'}"
+    )
 
-    # Récupération de l'instance ChromaDB déjà initialisée depuis le registre
     chroma_service = get_chroma_service()
     
     try:
-        # On demande les 5 e-mails les plus pertinents sémantiquement
-        resultats = await chroma_service.search_semantic(query=requete_semantique, n_results=5)
+        # 1. Construction dynamique des conditions de filtrage ChromaDB
+        conditions = []
+        
+        if date_debut:
+            conditions.append({"date_reception": {"$gte": date_debut}})
+        if date_fin:
+            conditions.append({"date_reception": {"$lte": date_fin}})
+        if expediteur:
+            # Utilisation de $contains car l'en-tête "From" est souvent complexe 
+            # (ex: "Jean Dupont <jean.dupont@ac-lyon.fr>")
+            conditions.append({"expediteur": {"$contains": expediteur}})
+            
+        # 2. Assemblage final du filter_metadata
+        filter_metadata = None
+        if len(conditions) > 1:
+            # ChromaDB nécessite $and pour de multiples conditions
+            filter_metadata = {"$and": conditions}
+        elif len(conditions) == 1:
+            # S'il n'y a qu'une seule condition, on la passe directement
+            filter_metadata = conditions[0]
+
+        # 3. Recherche vectorielle avec sur-échantillonnage (15 résultats au lieu de 5)
+        resultats = await chroma_service.search_semantic(
+            query=requete_semantique, 
+            n_results=15, 
+            filter_metadata=filter_metadata
+        )
         
         if not resultats:
-            return "Aucun e-mail pertinent n'a été trouvé dans la base de données pour cette recherche."
+            return "Aucun e-mail pertinent n'a été trouvé dans la base de données pour cette recherche (avec les filtres spécifiés)."
             
-        # Formatage des résultats pour que l'Orchestrateur (LLM) puisse les lire facilement
+        # 4. Formatage pour l'ingestion par l'Orchestrateur
         contexte_formate = "Voici les extraits d'e-mails trouvés dans la base de données :\n\n"
         
         for i, res in enumerate(resultats, 1):
             meta = res.get('metadata', {})
             date_reception = meta.get('date_reception', 'Date inconnue')
-            expediteur = meta.get('expediteur', 'Expéditeur inconnu')
+            mail_expediteur = meta.get('expediteur', 'Expéditeur inconnu')
             sujet = meta.get('sujet', 'Sans objet')
             texte = res.get('document', '')
             
             contexte_formate += f"--- E-MAIL {i} ---\n"
             contexte_formate += f"Date : {date_reception}\n"
-            contexte_formate += f"De : {expediteur}\n"
+            contexte_formate += f"De : {mail_expediteur}\n"
             contexte_formate += f"Sujet : {sujet}\n"
             contexte_formate += f"Extrait du contenu : {texte}\n"
             contexte_formate += "-" * 20 + "\n\n"
@@ -3044,7 +3389,7 @@ async def rechercher_dans_les_emails(requete_semantique: str) -> str:
         return contexte_formate
         
     except Exception as e:
-        logger.error(f"Échec de la recherche vectorielle dans les e-mails : {e}")
+        logger.error(f"Échec de la recherche vectorielle dans les e-mails : {e}", exc_info=True)
         return "Erreur technique : impossible d'accéder à la base de données des e-mails pour le moment."
 
 async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_message: str) -> bool:
@@ -3052,7 +3397,7 @@ async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_messag
     Outil agissant comme un "bras robotique" pour injecter un e-mail dans le dossier 
     "Brouillons" (Drafts) de la messagerie académique du chef d'établissement.
     
-    ATTENTION POUR L'ORCHESTRATEUR : Tu dois D'ABORD rédiger toi-même la réponse 
+    ATTENTION POUR LE COPILOTE : Tu dois D'ABORD rédiger toi-même la réponse 
     complète avant d'appeler cet outil.
 
     Args:
@@ -3086,7 +3431,7 @@ async def generer_briefing_emails(criteres: Optional[str] = None) -> str:
     Se connecte en direct à la messagerie pour relever les e-mails récents ou non lus, 
     et génère un résumé intelligent selon les instructions fournies.
     
-    ATTENTION POUR L'ORCHESTRATEUR : Utilise cet outil lorsque le chef d'établissement 
+    ATTENTION POUR LE COPILOTE : Utilise cet outil lorsque le chef d'établissement 
     te demande explicitement un "résumé", un "point sur ses mails", ou cherche à savoir 
     s'il a reçu quelque chose de nouveau concernant un sujet précis (ex: "Ai-je des 
     urgences ce matin ?", "Fais-moi un point des nouveaux mails uniquement sur le financier", "Y a-t-il des messages 
@@ -3169,8 +3514,8 @@ from .drive_tools import (
 
 # --- Outils d'Agenda et de Planification (Google Calendar / Tasks) ---
 from .calendar_tools import (
-    creer_evenement_agenda,
-    creer_tache,
+    gerer_agenda,
+    gerer_taches,
     programmer_alerte
 )
 

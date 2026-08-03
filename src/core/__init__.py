@@ -29,7 +29,9 @@ from .dependencies import (
     get_chroma_service,
     set_chroma_service,
     get_drive_service,
-    set_drive_service
+    set_drive_service,
+    get_telegram_service,
+    set_telegram_service
 )
 
 # --- Configuration ---

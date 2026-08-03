@@ -1,5 +1,6 @@
 from typing import List, Optional
 from src.core import MailObject
+from src.utils import truncate_text_for_llm
 
 def get_briefing_system_prompt() -> str:
     """
@@ -45,9 +46,11 @@ def build_briefing_prompt(emails: List[MailObject], user_instruction: Optional[s
         prompt += f"De : {mail.expediteur}\n"
         prompt += f"Date : {date_str}\n"
         prompt += f"Objet : {mail.sujet}{pj_str}\n"
-        # On limite le contenu brut s'il est démesurément long (ex: > 3000 caractères)
-        # pour ne pas noyer l'agent, bien que Flash gère de grands contextes.
-        contenu = mail.contenu_texte[:3000] + ("..." if len(mail.contenu_texte) > 3000 else "")
+        
+        # On limite le contenu brut s'il est démesurément long pour ne pas noyer l'agent.
+        # Utilisation de la troncature intelligente pour ne pas casser le sens des phrases.
+        contenu = truncate_text_for_llm(mail.contenu_texte, max_tokens=1000)
+        
         prompt += f"Contenu :\n{contenu}\n"
         prompt += "-" * 20 + "\n\n"
 
