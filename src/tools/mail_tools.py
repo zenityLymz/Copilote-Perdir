@@ -1,6 +1,8 @@
+import os
 from typing import Optional
 from src.utils import get_logger
 from src.core import get_imap_service, get_chroma_service
+from src.services.chroma_service import ChromaDBService
 
 # Initialisation du logger
 logger = get_logger(__name__)
@@ -9,7 +11,8 @@ async def rechercher_dans_les_emails(
     requete_semantique: str, 
     date_debut: Optional[str] = None, 
     date_fin: Optional[str] = None,
-    expediteur: Optional[str] = None
+    expediteur: Optional[str] = None,
+    annee_archive: Optional[str] = None
 ) -> str:
     """
     Interroge la mémoire vectorielle de l'établissement pour retrouver une information 
@@ -33,7 +36,7 @@ async def rechercher_dans_les_emails(
         date_debut (Optional[str]): Date de début de la fenêtre de recherche (format ISO 8601).
         date_fin (Optional[str]): Date de fin de la fenêtre de recherche (format ISO 8601).
         expediteur (Optional[str]): Le nom ou l'adresse e-mail (partielle ou complète) de l'expéditeur.
-
+        annee_archive (Optional[str]): Vide par défaut (recherche dans l'année en cours). Si l'utilisateur demande explicitement une recherche dans une année scolaire antérieure, doit être au format YYYY-YYYY (ex: "2024-2025").
     Returns:
         str: Le contexte textuel reconstitué à partir des e-mails les plus pertinents, 
              ou un message clair si rien n'a été trouvé.
@@ -41,13 +44,32 @@ async def rechercher_dans_les_emails(
     
     logger.info(
         f"Outil 'rechercher_dans_les_emails' appelé. Requête: '{requete_semantique}' | "
-        f"Expéditeur: '{expediteur}' | Période: {date_debut or 'Origine'} -> {date_fin or 'Aujourdhui'}"
+        f"Expéditeur: '{expediteur}' | Période: {date_debut or 'Origine'} -> {date_fin or 'Aujourdhui'} | Année archive: {annee_archive or 'Base courante'}"
     )
 
-    chroma_service = get_chroma_service()
+    # 1. Sélection dynamique de la base de données vectorielle
+    if annee_archive:
+        # On définit le chemin vers l'archive demandée
+        chemin_archive = f"data/chroma_db_{annee_archive}"
+        
+        # On vérifie d'abord si le dossier existe physiquement
+        if not os.path.exists(chemin_archive):
+            logger.warning(f"Tentative d'accès à une archive inexistante : {chemin_archive}")
+            return f"Erreur : L'archive demandée pour l'année '{annee_archive}' n'existe pas dans le système."
+        
+        try:
+            logger.debug(f"Connexion à la volée à l'archive vectorielle : {chemin_archive}")
+            # Instanciation dynamique. (ChromaDB gère son propre cache interne pour ne pas recharger bêtement)
+            chroma_service = ChromaDBService(persist_directory=chemin_archive)
+        except Exception as e:
+            logger.error(f"Impossible de monter l'archive {chemin_archive} en mémoire : {e}", exc_info=True)
+            return f"Erreur technique lors du chargement de l'archive '{annee_archive}'."
+    else:
+        # Cas classique : on récupère l'instance Singleton de l'année en cours
+        chroma_service = get_chroma_service()
     
     try:
-        # 1. Construction dynamique des conditions de filtrage ChromaDB
+        # 2. Construction dynamique des conditions de filtrage ChromaDB
         conditions = []
         
         if date_debut:
@@ -59,7 +81,7 @@ async def rechercher_dans_les_emails(
             # (ex: "Jean Dupont <jean.dupont@ac-lyon.fr>")
             conditions.append({"expediteur": {"$contains": expediteur}})
             
-        # 2. Assemblage final du filter_metadata
+        # 3. Assemblage final du filter_metadata
         filter_metadata = None
         if len(conditions) > 1:
             # ChromaDB nécessite $and pour de multiples conditions
@@ -68,7 +90,7 @@ async def rechercher_dans_les_emails(
             # S'il n'y a qu'une seule condition, on la passe directement
             filter_metadata = conditions[0]
 
-        # 3. Recherche vectorielle avec sur-échantillonnage (15 résultats au lieu de 5)
+        # 4. Recherche vectorielle avec sur-échantillonnage (15 résultats au lieu de 5)
         resultats = await chroma_service.search_semantic(
             query=requete_semantique, 
             n_results=15, 
@@ -76,9 +98,10 @@ async def rechercher_dans_les_emails(
         )
         
         if not resultats:
-            return "Aucun e-mail pertinent n'a été trouvé dans la base de données pour cette recherche (avec les filtres spécifiés)."
+            mention_archive = f" dans l'archive {annee_archive}" if annee_archive else " dans la base courante"
+            return f"Aucun e-mail pertinent n'a été trouvé{mention_archive} pour cette recherche (avec les filtres spécifiés)."
             
-        # 4. Formatage pour l'ingestion par l'Orchestrateur
+        # 5. Formatage pour l'ingestion par l'Orchestrateur
         contexte_formate = "Voici les extraits d'e-mails trouvés dans la base de données :\n\n"
         
         for i, res in enumerate(resultats, 1):

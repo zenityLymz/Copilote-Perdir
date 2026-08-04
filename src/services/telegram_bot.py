@@ -116,8 +116,8 @@ class TelegramBotService:
         # Fermeture de sécurité (Closure) identique à register_command
         async def secure_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             # Vérification de l'identité de l'expéditeur
-            # Le bot accepte si moi (en privé) OU si le message vient du GROUPE AUTORISÉ
-            if str(update.effective_user.id) != self._allowed_user_id and str(update.effective_chat.id) != "-100987654321":
+            # Le bot accepte si moi 
+            if str(update.effective_user.id) != self._allowed_user_id :
                 logger.warning(
                     f"Tentative de message interceptée d'un utilisateur non autorisé "
                     f"({update.effective_user.id})."

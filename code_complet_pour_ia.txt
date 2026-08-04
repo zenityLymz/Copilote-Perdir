@@ -1,122 +1,230 @@
 
 ============================================================
---- FICHIER : README.md ---
+--- FICHIER : main.py ---
 ============================================================
 
+"""
+Point d'entrée principal (Main) du Copilote IA pour Personnel de Direction.
 
-
-
-============================================================
---- FICHIER : test_pipeline_b.py ---
-============================================================
+Ce script initialise la configuration, connecte les services (IMAP, Google Drive, ChromaDB, Telegram),
+instancie les agents (Gemini) et lance les trois pipelines (A, B, C) de manière totalement asynchrone.
+"""
 
 import asyncio
-import logging
-from dotenv import load_dotenv
 import os
+import logging
+from datetime import datetime
+from pathlib import Path
 
-from src.utils.logger import setup_logger, get_logger
 from src.core.config import get_settings
-from src.agents.orchestrator_agent import OrchestratorAgent
-from src.services.telegram_bot import TelegramBotService
-from src.workflows.pipeline_b_telegram import PipelineBTelegram
+from src.core.dependencies import (
+    set_imap_service,
+    get_imap_service,
+    set_chroma_service,
+    set_drive_service,
+    set_telegram_service
+)
+from src.utils.logger import setup_logger, get_logger
 
-# Import du service IMAP et du registre
-from src.services.imap_service import IMAPService
-from src.core.dependencies import set_imap_service, get_imap_service
+from src.services import (
+    IMAPService,
+    ChromaDBService,
+    GoogleDriveService,
+    TelegramBotService
+)
+from src.agents import (
+    TriageAgent,
+    OrchestratorAgent,
+    SynthAgent
+)
+from src.workflows import (
+    PipelineAMails,
+    PipelineBTelegram,
+    PipelineCSynthesis
+)
 
-from src.services.chroma_service import ChromaDBService
-from src.core.dependencies import set_chroma_service
+# Configuration initiale du logging avec rotation de fichier (max 5 Mo) pour le Raspberry Pi
+LOG_FILE = Path("data/app.log")
+setup_logger(log_file_path=LOG_FILE, log_level=logging.INFO)
+logger = get_logger("MainApp")
 
-from src.services.google_drive_api import GoogleDriveService
-from src.core.dependencies import set_drive_service
+async def run_pipeline_a_loop(pipeline_a: PipelineAMails, interval_seconds: int = 300) -> None:
+    """
+    Boucle infinie pour exécuter le Pipeline A (Triage des Mails) à intervalles réguliers.
+    """
+    logger.info("Démarrage de la tâche de fond : Pipeline A (Triage automatique).")
+    while True:
+        try:
+            # Traitement des e-mails du dossier INBOX, par lots de 50 maximum
+            await pipeline_a.run_pipeline(folder="INBOX", limit=50)
+        except asyncio.CancelledError:
+            logger.info("Arrêt de la boucle du Pipeline A.")
+            break
+        except Exception as e:
+            # Sécurité défensive : Une erreur de relève IMAP ne doit jamais crasher la boucle
+            logger.error(f"Erreur inattendue dans la boucle du Pipeline A : {e}", exc_info=True)
+        
+        # Pause asynchrone non-bloquante
+        await asyncio.sleep(interval_seconds)
 
-from src.core.dependencies import set_telegram_service
+async def run_pipeline_c_loop(pipeline_c: PipelineCSynthesis, target_hour: int = 18) -> None:
+    """
+    Boucle infinie pour exécuter le Pipeline C (Synthèse Stratégique) une fois par jour.
+    Persiste la date de dernière exécution sur le disque pour survivre aux coupures de courant.
+    """
+    logger.info(f"Démarrage de la tâche de fond : Pipeline C (Synthèse programmée à partir de {target_hour:02d}h00).")
+    
+    # Fichier d'état physique stocké dans le dossier data
+    state_file = Path("data/last_synthesis.txt")
+    last_run_date_str = None
 
-# 1. Chargement explicite des variables d'environnement depuis le fichier .env
-load_dotenv()
+    # Au démarrage, on essaie de lire la date de la dernière synthèse réussie
+    if state_file.exists():
+        try:
+            last_run_date_str = state_file.read_text(encoding="utf-8").strip()
+            logger.info(f"État restauré : dernière synthèse effectuée le {last_run_date_str}.")
+        except Exception as e:
+            logger.warning(f"Impossible de lire le fichier d'état de synthèse : {e}")
 
-# 2. Configuration du logger pour le test (affichage dans la console)
-setup_logger(log_level=logging.INFO)
-logger = get_logger("TestPipelineB")
+    while True:
+        try:
+            now = datetime.now()
+            # On utilise le format ISO (YYYY-MM-DD) qui est parfait pour les comparaisons sous forme de chaîne de caractères
+            current_date_str = now.date().isoformat()
+            
+            # Condition : Il est 18h ou plus ET la synthèse n'a pas encore été faite aujourd'hui
+            if now.hour >= target_hour and last_run_date_str != current_date_str:
+                logger.info(f"Fenêtre de synthèse atteinte (Il est {now.hour}h{now.minute:02d}). Déclenchement du Pipeline C.")
+                
+                # Exécution du pipeline
+                await pipeline_c.run_pipeline()
+                
+                # Si le pipeline ne crashe pas, on valide l'exécution pour aujourd'hui
+                last_run_date_str = current_date_str
+                
+                # Sauvegarde physique sur la carte SD du Raspberry
+                try:
+                    state_file.write_text(last_run_date_str, encoding="utf-8")
+                    logger.info(f"Synthèse du {current_date_str} validée et sauvegardée sur le disque.")
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'écriture du fichier d'état de synthèse : {e}")
+                
+            # Vérification toutes les 5 minutes
+            await asyncio.sleep(300)
+                
+        except asyncio.CancelledError:
+            logger.info("Arrêt de la boucle du Pipeline C.")
+            break
+        except Exception as e:
+            logger.error(f"Erreur inattendue dans la boucle du Pipeline C : {e}", exc_info=True)
+            # En cas d'erreur de l'API Gemini, on attend 5 minutes avant la prochaine tentative
+            await asyncio.sleep(300)
 
-async def main():
-    logger.info("=== DÉMARRAGE DU TEST DU PIPELINE B (Copilote IA) ===")
+async def main() -> None:
+    """
+    Fonction principale asynchrone orchestrant l'initialisation et le lancement des pipelines.
+    """
+    logger.info("=== DÉMARRAGE DU COPILOTE IA PERDIR ===")
     
     try:
-        # Récupération de la configuration (vérifie que le .env est bien rempli)
+        # 1. Chargement de la configuration stricte
         settings = get_settings()
+
+        # 2. Initialisation et enregistrement des Services (Singletons via Dependency Injection)
+        logger.info("Initialisation des services externes...")
         
-        # --- Connexion et enregistrement des services ---
-        logger.info("Connexion au serveur IMAP...")
-        imap_service = IMAPService()
-        await imap_service.connect()
-        set_imap_service(imap_service) # On le place dans le registre
-        logger.info("IMAP connecté et enregistré dans le registre mondial.")
-        
-        
-        logger.info("Initialisation de la base de données vectorielle (ChromaDB)...")
-        
-        # On définit le chemin du dossier de stockage et on le crée s'il n'existe pas
-        chroma_dir = "./data/chroma_db"
+        # - Service ChromaDB (Vectoriel Local)
+        chroma_dir = os.path.abspath(settings.CHROMA_PERSIST_DIR)
         os.makedirs(chroma_dir, exist_ok=True)
-        
-        # On instancie le service en lui passant le chemin requis
-        chroma_service = ChromaDBService(persist_directory=chroma_dir)
+        chroma_service = ChromaDBService(persist_directory=chroma_dir, embedding_model_name=settings.EMBEDDING_MODEL_NAME)
         set_chroma_service(chroma_service)
         
-        logger.info("ChromaDB enregistré dans le registre mondial.")
-
-        # --- Initialisation de Google Drive ---
-        logger.info("Authentification au service Google Drive...")
-        drive_service = GoogleDriveService()
+        # - Service Google Drive (OAuth)
+        drive_service = GoogleDriveService(credentials_path=settings.GOOGLE_CREDENTIALS_PATH, token_path=settings.GOOGLE_TOKEN_PATH)
         await drive_service.authenticate()
         set_drive_service(drive_service)
-        logger.info("Google Drive authentifié et enregistré dans le registre mondial.")
+
+        # - Service IMAP (Messagerie Académique)
+        imap_service = IMAPService(host=settings.IMAP_HOST, user=settings.IMAP_USER, password=settings.IMAP_PASSWORD, port=settings.IMAP_PORT)
+        await imap_service.connect()
+        set_imap_service(imap_service)
+
+        # - Service Telegram Bot
+        telegram_service = TelegramBotService(token=settings.TELEGRAM_BOT_TOKEN, allowed_user_id=settings.TELEGRAM_ALLOWED_USER_ID)
+        set_telegram_service(telegram_service)
+
+        logger.info("Tous les services sont connectés et enregistrés.")
+
+        # 3. Initialisation des Agents IA (Modèles Gemini)
+        logger.info("Initialisation des cerveaux IA...")
+        triage_agent = TriageAgent(api_key=settings.GEMINI_API_KEY, model_name=settings.GEMINI_FLASH_MODEL)
+        orchestrator_agent = OrchestratorAgent(api_key=settings.GEMINI_API_KEY, model_name=settings.GEMINI_FLASH_MODEL)
+        synth_agent = SynthAgent(api_key=settings.GEMINI_API_KEY, model_name=settings.GEMINI_FLASH_MODEL)
+
+        # 4. Instanciation des Pipelines
+        logger.info("Câblage des Pipelines d'exécution...")
         
-        # 3. Instanciation des Services et Agents nécessaires
-        logger.info("Initialisation de l'Agent Orchestrateur...")
-        orchestrator = OrchestratorAgent(api_key=settings.GEMINI_API_KEY)
-        
-        logger.info("Initialisation du Service Telegram...")
-        telegram_service = TelegramBotService()
-        set_telegram_service(telegram_service)  # On l'enregistre dans le registre mondial
-        
-        # 4. Instanciation du Pipeline (Le Chef d'Orchestre)
-        logger.info("Câblage du Pipeline B...")
+        # - Pipeline A (Passif - Triage Automatique des Mails)
+        pipeline_a = PipelineAMails(
+            imap_service=imap_service,
+            triage_agent=triage_agent,
+            chroma_service=chroma_service,
+            telegram_service=telegram_service
+        )
+
+        # - Pipeline B (Actif - Assistant Interactif Telegram)
         pipeline_b = PipelineBTelegram(
             telegram_service=telegram_service,
-            orchestrator_agent=orchestrator
+            orchestrator_agent=orchestrator_agent
         )
         
-        # 5. Enregistrement du gestionnaire de messages
+        # Raccordement du gestionnaire de messages naturels Telegram vers le Pipeline B
         telegram_service.register_message_handler(pipeline_b.process_telegram_message)
+
+        # - Pipeline C (Différé - Synthèse Stratégique)
+        pipeline_c = PipelineCSynthesis(
+            drive_service=drive_service,
+            telegram_service=telegram_service,
+            imap_service=imap_service,
+            synth_agent=synth_agent,
+            memoire_file_id=settings.MEMOIRE_FILE_ID
+        )
+
+        # 5. Démarrage des tâches asynchrones parallèles
+        logger.info("🚀 Lancement des boucles de traitement asynchrones...")
         
-        # 6. Démarrage de l'écoute sur Telegram
-        logger.info("🚀 Le bot est prêt ! Vous pouvez lui envoyer un message sur Telegram.")
-        await telegram_service.start_polling()
-        
-        # Pour maintenir le script en vie
-        while True:
-            await asyncio.sleep(3600)
-            
+        # Le rassemblement des tâches dans asyncio.gather assure le fonctionnement en concurrence 100% Async
+        await asyncio.gather(
+            telegram_service.start_polling(),                       # Écoute Telegram en Long Polling
+            run_pipeline_a_loop(pipeline_a, interval_seconds=300),  # Relève des mails toutes les 5 minutes
+            run_pipeline_c_loop(pipeline_c, target_hour=18)         # Synthèse programmée à partir de 18h
+        )
+
+    except KeyboardInterrupt:
+        logger.info("Arrêt manuel de l'application demandé.")
     except Exception as e:
-        logger.error(f"Erreur critique lors du test : {e}", exc_info=True)
+        logger.critical(f"Défaillance critique ayant entraîné l'arrêt du programme : {e}", exc_info=True)
     finally:
-        # Déconnexion propre de l'IMAP à l'arrêt du programme
+        # Nettoyage et fermeture propre des connexions persistantes à l'arrêt
+        logger.info("Fermeture propre des services...")
         try:
-            imap_service = get_imap_service()
-            await imap_service.disconnect()
-            logger.info("Service IMAP déconnecté proprement.")
+            imap_to_close = get_imap_service()
+            await imap_to_close.disconnect()
         except Exception:
             pass
+        logger.info("Arrêt complet du Copilote.")
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Lancement de l'Event Loop primaire
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Programme terminé par l'utilisateur.")
 
 
 ============================================================
---- FICHIER : src/main.py ---
+--- FICHIER : README.md ---
 ============================================================
 
 
@@ -534,9 +642,18 @@ class OrchestratorAgent:
 
 from typing import Optional
 from google import genai
+from google.genai import types
 
 from src.core.config import get_settings
+from src.core.exceptions import AgentError
 from src.utils.logger import get_logger
+
+# Importation des constructeurs de prompts mis à jour
+from src.prompts.synth_prompts import (
+    get_pilotage_system_prompt,
+    build_pilotage_update_prompt,
+    build_summary_prompt
+)
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
@@ -545,8 +662,8 @@ class SynthAgent:
     """
     Agent IA spécialisé dans l'analyse stratégique complexe et la structuration de textes.
     Intervient exclusivement dans le Pipeline C (traitement différé du soir).
-    Utilise un modèle avancé (Gemini Pro) pour analyser l'impact des informations 
-    de la journée et mettre à jour rigoureusement le fichier Markdown de Pilotage.
+    Utilise le modèle avancé (Gemini Pro) pour analyser l'impact des informations 
+    de la journée et mettre à jour rigoureusement le fichier Markdown "Mémoire de l'Établissement".
     """
 
     def __init__(self, api_key: str, model_name: Optional[str] = None) -> None:
@@ -555,41 +672,122 @@ class SynthAgent:
 
         Args:
             api_key (str): La clé API Google Gemini.
-            model_name (Optional[str]): Le nom du modèle à utiliser (Gemini Pro recommandé 
-                                        pour le raisonnement).
+            model_name (Optional[str]): Le nom du modèle à utiliser (Gemini Pro recommandé).
         """
-        pass
+        try:
+            settings = get_settings()
+            self.client = genai.Client(api_key=api_key)
+            
+            # Utilisation de Gemini Pro par défaut pour sa capacité de raisonnement (fenêtre de contexte large)
+            #self.model_name = model_name or settings.GEMINI_PRO_MODEL
+            self.model_name = model_name or settings.GEMINI_FLASH_MODEL #Flash pour les tests
+            
+            logger.debug(f"SynthAgent initialisé avec succès (Modèle: {self.model_name}).")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'initialisation du client Gemini (Synthèse) : {e}")
+            raise AgentError(f"Impossible d'initialiser l'Agent de Synthèse : {e}")
 
-    async def rewrite_pilotage_content(self, current_markdown: str, daily_info: str) -> Optional[str]:
+    async def rewrite_memoire_etablissement_content(self, current_markdown: str, daily_info: str) -> Optional[str]:
         """
-        Applique la mécanique "Read-Rewrite-Replace" pour le Fichier Pilotage.
-        Évalue l'impact des nouvelles informations de la journée (mails + tampon Telegram), 
+        Applique la mécanique "Read-Rewrite-Replace" pour le fichier de mémoire.
+        Évalue l'impact des nouvelles informations de la journée (mails + notes Telegram), 
         fusionne intelligemment les données dans les rubriques concernées du Markdown 
         sans altérer sa structure.
 
         Args:
-            current_markdown (str): Le contenu intégral actuel du fichier de pilotage.
-            daily_info (str): Le texte consolidé contenant tous les événements et notes de la journée.
+            current_markdown (str): Le contenu intégral actuel du fichier.
+            daily_info (str): Le texte consolidé contenant tous les événements de la journée.
 
         Returns:
             Optional[str]: Le nouveau contenu Markdown complet, prêt à écraser l'ancien fichier, 
-                           ou None si l'IA juge qu'aucune information ne nécessite de mise à jour.
+                           ou None si l'API échoue.
         """
-        pass
+        logger.info("Début de l'analyse et de la réécriture de la Mémoire de l'Établissement par l'IA.")
         
+        try:
+            # 1. Préparation des prompts
+            system_prompt = get_pilotage_system_prompt()
+            user_prompt = build_pilotage_update_prompt(current_markdown, daily_info)
+
+            # 2. Appel asynchrone à l'API Gemini Pro
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    # Température très basse (0.1) : On exige de la rigueur structurelle (Markdown),
+                    # l'IA ne doit faire preuve d'aucune créativité littéraire ici.
+                    temperature=0.1, 
+                )
+            )
+
+            if not response.text:
+                raise AgentError("La réponse générée par Gemini (SynthAgent) est vide.")
+
+            # 3. Nettoyage de sécurité supplémentaire
+            # Au cas où le LLM ajouterait quand même des balises malgré l'interdiction du prompt
+            final_text = response.text.strip()
+            if final_text.startswith("```markdown"):
+                final_text = final_text[11:]
+            if final_text.startswith("```"):
+                final_text = final_text[3:]
+            if final_text.endswith("```"):
+                final_text = final_text[:-3]
+
+            logger.info("Réécriture de la Mémoire de l'Établissement générée avec succès.")
+            return final_text.strip()
+
+        except Exception as e:
+            logger.error(f"Échec lors de la réécriture du document par l'Agent de Synthèse : {e}", exc_info=True)
+            return None
+
     async def generate_update_summary(self, old_markdown: str, new_markdown: str) -> str:
         """
         Génère un résumé des modifications apportées (ajouts, suppressions) au fichier 
-        Pilotage, destiné à être envoyé au Perdir via Telegram.
-        
+        Mémoire, destiné à être envoyé au Perdir via Telegram.
+
         Args:
             old_markdown (str): L'ancienne version du fichier.
             new_markdown (str): La nouvelle version du fichier.
             
         Returns:
-            str: Un résumé concis des changements.
+            str: Un résumé concis des changements (format HTML pour Telegram).
         """
-        pass
+        logger.debug("Génération du résumé des modifications pour Telegram...")
+        
+        try:
+            # Création du contexte comparatif à envoyer au modèle
+            changes_diff = (
+                "--- ANCIENNE VERSION ---\n"
+                f"{old_markdown}\n\n"
+                "--- NOUVELLE VERSION ---\n"
+                f"{new_markdown}"
+            )
+            
+            # Récupération du prompt dédié au résumé
+            user_prompt = build_summary_prompt(changes_diff)
+
+            # Appel asynchrone (On peut utiliser Gemini Flash ici pour aller plus vite,
+            # mais on garde le Pro instancié par simplicité et cohérence).
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    # Température légèrement plus haute (0.3) pour un ton plus naturel dans le résumé
+                    temperature=0.3, 
+                )
+            )
+
+            if not response.text:
+                logger.warning("Le résumé généré est vide, renvoi d'un message par défaut.")
+                return "La mémoire de l'établissement a été mise à jour, mais le résumé n'a pas pu être généré."
+
+            logger.info("Résumé de synthèse généré avec succès.")
+            return response.text.strip()
+
+        except Exception as e:
+            logger.error(f"Échec lors de la génération du résumé de synthèse : {e}")
+            return "✅ La Mémoire de l'Établissement a bien été mise à jour (le résumé textuel est indisponible suite à une erreur technique)."
 
 
 ============================================================
@@ -998,6 +1196,7 @@ class MailObject(BaseModel):
     pieces_jointes: List[str] = Field(default_factory=list, description="Noms des pièces jointes")
     est_traite: bool = Field(default=False, description="Indique si le mail a déjà été traité par le workflow")
     nombre_tokens: Optional[int] = Field(None, description="Taille estimée du texte pour sécuriser l'envoi vers l'API d'embeddings")
+    dossier_source: Optional[str] = Field(None, description="Dossier IMAP d'origine (utile pour le marquage)")
 
 
 class IA_TriResponse(BaseModel):
@@ -1437,17 +1636,43 @@ def build_orchestrator_prompt(user_message: str, system_alerts: Optional[List[st
 def get_pilotage_system_prompt() -> str:
     """
     Génère le prompt système pour l'agent de synthèse (Gemini Pro).
-    
-    Définit le rôle de l'assistant : agir comme un conseiller stratégique capable 
-    de prendre du recul sur les événements d'une journée. Il doit lire un flux 
-    d'informations hétérogènes, identifier ce qui relève du structurel/macroscopique 
-    (Bâti, RH, Finances, Climat), et l'intégrer intelligemment dans un document 
-    Markdown sans en casser l'arborescence.
+    Définit le rôle de l'assistant : agir comme un Directeur de Cabinet capable 
+    de prendre du recul sur les événements d'une journée.
+    Il doit lire un flux d'informations hétérogènes, écarter le "bruit" éphémère,
+    et intégrer intelligemment les données durables ou stratégiques dans le 
+    document Markdown "Mémoire de l'Établissement" sans en casser l'arborescence.
     
     Returns:
-        str: Le prompt système imposant les règles strictes de fusion de contenu.
+        str: Le prompt système imposant les règles strictes de fusion et de format de sortie.
     """
-    pass
+    return """Tu es le Directeur de Cabinet (IA) d'un chef d'établissement scolaire (Perdir).
+        Ta mission est de tenir à jour la "Mémoire de l'Établissement", un document au format Markdown contenant 3 sections : 
+        - le suivi des dossiers structurants servant au pilotage de l'établissement (RH, Bâti, Finances, Pédagogie)
+        - l'annuaire des personnels (noms, prénoms, fonctions, contacts)
+        - les us et coutumes locaux, les "choses à savoir" pour les nouveaux arrivants (ex: "le gardien s'appelle Michel", "la salle des profs est au 2e étage", etc.)
+
+        Pour cela, tu vas recevoir chaque soir deux types d'informations :
+        1. Le contenu actuel du fichier Markdown de Mémoire de l'Établissement (version brute, non formatée).
+        2. Les événements de la journée (e-mails et échanges Telegram entre le chef d'établissement et son assistant IA), qui peuvent contenir des informations stratégiques ou du bruit éphémère.
+
+        MÉCANIQUE DE MISE À JOUR (Read-Rewrite-Replace) :
+        Tu dois réécrire intégralement le document en y intégrant les nouvelles informations aux bons endroits, en respectant strictement l'arborescence Markdown existante.
+        Attention, tu manipules un fichier critique. Les modifications apportées doivent être pertinentes, justifiées, durables et ne pas altérer les sections existantes qui ne sont pas concernées par les nouvelles données.
+        Tu récupères les informations d'une seule journée donc les modifications sont généralement mineures. Par conséquent, il n'est pas envisageable de modifer une grande proportion du document sauf si les nouvelles informations le justifient.
+
+        RÈGLES STRICTES D'ANALYSE (Filtrage du bruit) :
+        1. EXCLUSION : Ignore totalement les informations éphémères, périssables ou sans intérêt à long terme (ex: un retard ponctuel, l'absence d'un élève un jour donné, une prise de RDV, un spam, un mail de confirmation banal).
+        2. INCLUSION : Consigne tout ce qui est stratégique, structurel, ou utile pour la connaissance du terrain (ex: avancement d'un chantier, climat scolaire, tensions RH, nouvelles subventions, nouvelles procédures, nouvelle adresse mail d'un prof, informations utiles comme "le gardien s'appelle Michel, je le tutoie", etc.).
+        3. CONSERVATION DE L'EXISTANT : Toute information existante qui n'est pas affectée par les nouvelles données doit être conservée telle quelle. Tu as le droit, si c'est vraiment pertinent, de modifier certains éléments existants, voire d'en supprimer, mais cela doit être jusitfié logiquement par les nouvelles informations acquises, qui doivent venir d'une source fiable.
+        4. STRUCTURE : Ne casse jamais l'arborescence Markdown existante (Titres #). Ajoute de nouvelles sous-rubriques uniquement si cela s'avère absolument indispensable pour classer une nouvelle information majeure.
+
+        CONTRAINTE DE SORTIE ABSOLUE (CRITIQUE) :
+        Le texte que tu vas générer écrasera directement le fichier source original sur le serveur.
+        Par conséquent, tu dois renvoyer UNIQUEMENT le code Markdown intégral mis à jour.
+        - N'ajoute AUCUN texte d'introduction (Interdiction d'écrire "Voici le fichier mis à jour :").
+        - N'ajoute AUCUN texte de conclusion.
+        - N'encadre SURTOUT PAS ta réponse avec des balises de bloc de code (comme ```markdown ou ```). Renvoie le texte nu.
+        """
 
 def build_pilotage_update_prompt(current_content: str, daily_info: str) -> str:
     """
@@ -1456,26 +1681,50 @@ def build_pilotage_update_prompt(current_content: str, daily_info: str) -> str:
     et de générer la nouvelle version intégrale du document.
     
     Args:
-        current_content (str): Le contenu Markdown brut du fichier central de pilotage.
+        current_content (str): Le contenu Markdown brut du fichier de mémoire.
         daily_info (str): La concaténation des e-mails et notes Telegram de la journée.
         
     Returns:
         str: Le prompt contenant les instructions de fusion et les données à traiter.
     """
-    pass
+    return f"""Voici les données pour la mise à jour de la Mémoire de l'Établissement.
+
+        --- DÉBUT DES ÉVÉNEMENTS DE LA JOURNÉE ---
+        {daily_info}
+        --- FIN DES ÉVÉNEMENTS DE LA JOURNÉE ---
+
+        --- DÉBUT DU DOCUMENT ACTUEL (À METTRE À JOUR) ---
+        {current_content}
+        --- FIN DU DOCUMENT ACTUEL ---
+
+        Évalue les événements de la journée, filtre les informations éphémères, intègre les nouveautés pertinentes et renvoie la nouvelle version intégrale du document en respectant rigoureusement les contraintes de sortie absolues (texte brut uniquement).
+        """
 
 def build_summary_prompt(changes_diff: str) -> str:
     """
     Construit un prompt demandant à l'IA de résumer de manière très concise 
-    les modifications qu'elle vient d'apporter au fichier de pilotage (pour Telegram).
+    les modifications qu'elle vient d'apporter au fichier de mémoire (pour Telegram).
     
     Args:
-        changes_diff (str): Les éléments modifiés ou le delta entre les deux versions.
+        changes_diff (str): Les éléments modifiés, ou le contexte pour en déduire les changements.
         
     Returns:
-        str: Le prompt demandant la création d'un court message de notification.
+        str: Le prompt demandant la création d'un court message de notification formaté en HTML.
     """
-    pass
+    return f"""Tu es l'assistant du chef d'établissement.
+Tu viens d'analyser les événements de la journée et de mettre à jour le fichier "Mémoire de l'Établissement".
+
+Voici les données brutes de la journée que tu as traitées :
+{changes_diff}
+
+Rédige un compte-rendu ultra-concis (3 à 5 puces maximum) des éléments stratégiques que tu as ajoutés au document.
+S'il n'y a pas eu de changement (que du bruit éphémère), dis-le simplement et poliment.
+
+CONTRAINTES DE FORMATAGE (POUR TELEGRAM) :
+- Utilise UNIQUEMENT le HTML pris en charge par Telegram : <b>gras</b>, <i>italique</i>.
+- Interdiction stricte d'utiliser le format Markdown (* ou ** ou #).
+- Va droit au but : pas d'introduction ("Voici le résumé"), pas de conclusion ni de salutations à la fin.
+"""
 
 
 ============================================================
@@ -2719,6 +2968,122 @@ class IMAPService:
         # Si la boucle se termine sans rien trouver
         return None
 
+    async def fetch_unsynthesized_emails(self, limit_per_folder: int = 50) -> List[MailObject]:
+        """
+        Récupère tous les e-mails de la boîte (sauf corbeille) qui n'ont pas encore 
+        été traités par le Pipeline C de synthèse nocturne.
+        N'applique AUCUN flag pour respecter le principe d'acquittement (ACK).
+        """
+        return await asyncio.to_thread(self._fetch_unsynthesized_emails_sync, limit_per_folder)
+
+    def _fetch_unsynthesized_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
+        import re
+        if not self.mail:
+            raise IMAPError("Service IMAP non connecté.")
+
+        logger.info("Récupération des e-mails non synthétisés (UNKEYWORD CopiloteSynthetise)...")
+        emails_list = []
+        
+        try:
+            status, folders = self.mail.list()
+            if status != 'OK':
+                raise IMAPError("Impossible de lister les dossiers de la messagerie.")
+
+            for folder_data in folders:
+                folder_str = folder_data.decode('utf-8')
+                
+                # Exclusion de la corbeille (adapter selon les noms usuels)
+                if "trash" in folder_str.lower() or "corbeille" in folder_str.lower() or "deleted" in folder_str.lower():
+                    continue
+
+                # Extraction propre du nom du dossier IMAP
+                match = re.search(r'\"([^\"]+)\"$', folder_str)
+                if match:
+                    folder_name = f'"{match.group(1)}"'
+                else:
+                    folder_name = folder_str.split()[-1]
+
+                # Sélection en lecture seule (sécurité supplémentaire)
+                status, _ = self.mail.select(folder_name, readonly=True)
+                if status != 'OK':
+                    continue
+
+                # On cherche ceux qui n'ont PAS le tag CopiloteSynthetise
+                status, messages = self.mail.uid('search', None, 'UNKEYWORD', 'CopiloteSynthetise')
+                if status != 'OK' or not messages[0]:
+                    continue
+
+                mail_ids = messages[0].split()
+                mail_ids = mail_ids[-limit_per_folder:] 
+                
+                for mail_id in mail_ids:
+                    status, msg_data = self.mail.uid('fetch', mail_id, '(BODY.PEEK[])')
+                    if status != 'OK':
+                        continue
+
+                    mail_obj = self._parse_email_from_bytes(mail_id, msg_data)
+                    if mail_obj:
+                        # Injection du dossier source pour permettre le marquage ultérieur
+                        mail_obj.dossier_source = folder_name
+                        emails_list.append(mail_obj)
+
+            logger.info(f"{len(emails_list)} e-mail(s) en attente de synthèse récupéré(s).")
+            return emails_list
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des e-mails pour la synthèse : {e}")
+            raise IMAPError(f"Erreur IMAP globale (Synthèse) : {e}")
+
+
+    async def mark_emails_as_synthesized(self, emails: List[MailObject]) -> bool:
+        """
+        Méthode d'Acquittement (ACK).
+        Applique le flag 'CopiloteSynthetise' sur une liste d'e-mails pour qu'ils 
+        ne soient plus traités lors des prochaines synthèses.
+        """
+        return await asyncio.to_thread(self._mark_emails_as_synthesized_sync, emails)
+
+    def _mark_emails_as_synthesized_sync(self, emails: List[MailObject]) -> bool:
+        if not self.mail:
+            logger.error("Marquage impossible : IMAP non connecté.")
+            return False
+            
+        if not emails:
+            return True
+
+        try:
+            # 1. Regroupement intelligent des e-mails par dossier d'origine
+            # Cela évite de faire des 'SELECT' intempestifs à chaque e-mail
+            folders_dict = {}
+            for mail in emails:
+                folder = getattr(mail, 'dossier_source', '"INBOX"')
+                if folder not in folders_dict:
+                    folders_dict[folder] = []
+                folders_dict[folder].append(mail.id_mail.encode('utf-8'))
+                
+            # 2. Itération par dossier et marquage par lots (Batching)
+            for folder, uids in folders_dict.items():
+                # On doit ouvrir le dossier en mode écriture (readonly=False)
+                status, _ = self.mail.select(folder, readonly=False)
+                if status != 'OK':
+                    logger.warning(f"Impossible de sélectionner le dossier {folder} pour le marquage.")
+                    continue
+                    
+                # Concaténation des UIDs séparés par une virgule pour une requête IMAP optimisée
+                uids_str = b','.join(uids)
+                status, _ = self.mail.uid('STORE', uids_str, '+FLAGS', 'CopiloteSynthetise')
+                
+                if status == 'OK':
+                    logger.debug(f"{len(uids)} e-mail(s) marqué(s) 'CopiloteSynthetise' dans {folder}.")
+                else:
+                    logger.warning(f"Échec du marquage dans le dossier {folder}.")
+                    
+            return True
+            
+        except Exception as e:
+            logger.error(f"Erreur critique lors du marquage des e-mails (ACK) : {e}")
+            return False
+
 
 ============================================================
 --- FICHIER : src/services/telegram_bot.py ---
@@ -2842,8 +3207,8 @@ class TelegramBotService:
         # Fermeture de sécurité (Closure) identique à register_command
         async def secure_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             # Vérification de l'identité de l'expéditeur
-            # Le bot accepte si moi (en privé) OU si le message vient du GROUPE AUTORISÉ
-            if str(update.effective_user.id) != self._allowed_user_id and str(update.effective_chat.id) != "-100987654321":
+            # Le bot accepte si moi 
+            if str(update.effective_user.id) != self._allowed_user_id :
                 logger.warning(
                     f"Tentative de message interceptée d'un utilisateur non autorisé "
                     f"({update.effective_user.id})."
@@ -4230,23 +4595,26 @@ class PipelineBTelegram:
 --- FICHIER : src/workflows/pipeline_c_synthesis.py ---
 ============================================================
 
-from typing import List, Optional
+import json
+from pathlib import Path
+from typing import Optional, List, Tuple
 from datetime import datetime
 
 from src.services import GoogleDriveService, TelegramBotService, IMAPService
 from src.agents import SynthAgent
-from src.core import MailObject
+from src.core import ChatHistory, MailObject
+from src.utils import get_logger
 
+logger = get_logger(__name__)
 
 class PipelineCSynthesis:
     """
     Orchestrateur du Pipeline C (Différé) : Synthèse Stratégique.
-    
     Ce workflow s'exécute de manière asynchrone et planifiée (ex: tous les soirs à 18h).
     Il est responsable de la consolidation de la mémoire stratégique de l'établissement.
     Il agrège les e-mails de la journée et les notes vocales/textes du tampon Telegram,
     évalue leur impact via l'Agent de Synthèse (Gemini Pro), met à jour le fichier 
-    "Pilotage.md" (Read-Rewrite-Replace) et envoie un résumé au chef d'établissement.
+    "memoire_etablissement.md" (Read-Rewrite-Replace) et envoie un résumé au chef d'établissement.
     """
 
     def __init__(
@@ -4255,76 +4623,173 @@ class PipelineCSynthesis:
         telegram_service: TelegramBotService,
         imap_service: IMAPService,
         synth_agent: SynthAgent,
-        pilotage_file_id: str,
-        tampon_file_id: str
+        memoire_file_id: str
     ) -> None:
         """
         Initialise le Pipeline C avec les services et l'agent de synthèse.
 
         Args:
-            drive_service (GoogleDriveService): Service pour manipuler Pilotage.md et Tampon_Telegram.txt.
+            drive_service (GoogleDriveService): Service pour manipuler memoire_etablissement.md.
             telegram_service (TelegramBotService): Service pour envoyer le résumé des modifications.
             imap_service (IMAPService): Service pour récupérer les e-mails traités/envoyés dans la journée.
             synth_agent (SynthAgent): Agent IA (Pro) capable d'analyses complexes et croisées.
-            pilotage_file_id (str): L'ID Google Drive du fichier Markdown de Pilotage Stratégique.
-            tampon_file_id (str): L'ID Google Drive du fichier texte Tampon_Telegram.txt.
+            memoire_file_id (str): L'ID Google Drive du fichier Markdown de Mémoire de l'Établissement.
         """
-        pass
+        self.drive_service = drive_service
+        self.telegram_service = telegram_service
+        self.imap_service = imap_service
+        self.synth_agent = synth_agent
+        self.memoire_file_id = memoire_file_id
+        
+        self.history_file_path = Path("data/chat_history.json")
 
     async def run_pipeline(self) -> None:
         """
         Point d'entrée principal du traitement différé nocturne.
-        
-        Étapes orchestrées :
-        1. Collecte des informations de la journée (e-mails traités + tampon Telegram) via _gather_daily_information.
-        2. Si aucune nouvelle information, le pipeline s'arrête.
-        3. Appel de _update_pilotage_memory pour réaliser la mise à jour (Read-Rewrite-Replace).
-        4. Si des modifications ont eu lieu, envoi du résumé via TelegramBotService.
-        5. Purge du fichier tampon Telegram (_clear_telegram_buffer) pour préparer le lendemain.
+        Intègre le principe d'Atomicité (Acquittement / ACK).
         """
-        pass
+        logger.info("Début du cycle de synthèse nocturne (Pipeline C).")
+        try:
+            # 1. Collecte des informations (PHASE DE LECTURE SANS MARQUAGE)
+            # On récupère le texte ET la liste des objets mails pour pouvoir les acquitter plus tard
+            daily_info, emails_to_ack = await self._gather_daily_information()
+            
+            if not daily_info:
+                logger.info("Aucune nouvelle information pertinente aujourd'hui. Arrêt du pipeline.")
+                return
 
-    async def _gather_daily_information(self) -> str:
+            # 2. Mise à jour de la mémoire stratégique (PHASE D'ACTION API)
+            summary = await self._update_memoire_etablissement(daily_info)
+            
+            # 3. Finalisation (PHASE D'ACQUITTEMENT - ACK)
+            # Cette phase ne s'exécute QUE si summary contient un résultat (donc si Gemini a réussi)
+            if summary:
+                # Acquittement 1 : On marque les messages Telegram locaux
+                await self._mark_history_as_synthesized()
+                
+                # Acquittement 2 : On applique le flag IMAP 'CopiloteSynthetise' sur les mails traités
+                if emails_to_ack:
+                    await self.imap_service.mark_emails_as_synthesized(emails_to_ack)
+                
+                # Formatage Telegram (HTML)
+                notification = f"🌙 <b>RAPPORT DE SYNTHÈSE DU SOIR</b>\n\n{summary}"
+                await self.telegram_service.send_notification(notification)
+                logger.info("Cycle de synthèse nocturne terminé et acquitté avec succès.")
+            else:
+                 logger.info("L'Agent de Synthèse a jugé qu'aucune mise à jour du fichier n'était nécessaire. Aucun message n'est marqué pour éviter les pertes.")
+                 
+        except Exception as e:
+            # En cas de crash ici, la phase d'acquittement (ACK) n'est pas appelée.
+            # Les données seront relues en toute sécurité le lendemain.
+            logger.error(f"Erreur critique lors de l'exécution du Pipeline C : {e}", exc_info=True)
+
+
+    # Renvoie un Tuple contenant le texte et la liste des e-mails bruts
+    async def _gather_daily_information(self) -> Tuple[str, List[MailObject]]:
         """
         Récupère et agrège toutes les données brutes de la journée pour l'analyse stratégique.
-        - Lit le contenu de 'Tampon_Telegram.txt' via GoogleDriveService.
-        - Récupère les e-mails pertinents de la journée (INBOX, dossiers de tri sauf poubelle, messages envoyés).
-
-        Returns:
-            str: Une chaîne de caractères consolidée (ou un format structuré JSON) 
-                 contenant toutes les notes et textes de la journée, prête pour l'IA.
-        """
-        pass
-
-    async def _update_pilotage_memory(self, daily_info: str) -> Optional[str]:
-        """
-        Orchestre la mécanique 'Read-Rewrite-Replace' pour le Fichier de Pilotage.
+        - Lit le contenu de l'historique conversationnel local.
+        - Récupère les e-mails pertinents de la journée sans les marquer.
         
-        Étapes :
-        - Read : Téléchargement du contenu actuel du fichier Pilotage.md via GoogleDriveService.
-        - Rewrite : Le SynthAgent évalue l'impact des données sur les catégories existantes et 
-                    fusionne les informations tout en conservant la structure Markdown.
-        - Replace : Écrasement du fichier sur le Drive avec le nouveau contenu.
-
-        Args:
-            daily_info (str): L'information consolidée de la journée.
-
         Returns:
-            Optional[str]: Le texte du résumé des modifications (ajouts, suppressions) généré 
-                           par l'IA, ou None si aucune information n'était pertinente pour le pilotage.
+            Tuple[str, List[MailObject]]: Le texte consolidé et la liste des objets e-mails à acquitter plus tard.
         """
-        pass
+        logger.debug("Collecte des informations de la journée...")
+        consolidated_info = ""
 
-    async def _clear_telegram_buffer(self) -> bool:
-        """
-        Vide le fichier 'Tampon_Telegram.txt' sur Google Drive.
-        Cette sous-routine est appelée uniquement si l'analyse de la journée a réussi, 
-        afin de ne pas perdre de données en cas d'erreur API.
+        # A. Collecte des notes Telegram
+        telegram_notes = []
+        if self.history_file_path.exists():
+            try:
+                content = self.history_file_path.read_text(encoding="utf-8")
+                chat_history = ChatHistory.model_validate_json(content)
+                
+                # Filtrage : On ne garde que les messages de l'utilisateur non synthétisés
+                telegram_notes = [
+                    turn for turn in chat_history.turns 
+                    if turn.role == "user" and not turn.est_synthetise
+                ]
+            except Exception as e:
+                logger.error(f"Erreur lors de la lecture de {self.history_file_path} : {e}")
 
-        Returns:
-            bool: True si le fichier a été purgé avec succès, False sinon.
+        if telegram_notes:
+            consolidated_info += "--- NOTES TELEGRAM DE LA JOURNÉE (DICTÉES PAR LE PERDIR) ---\n"
+            for note in telegram_notes:
+                date_str = note.timestamp.strftime('%H:%M')
+                consolidated_info += f"[{date_str}] : {note.message}\n"
+            consolidated_info += "\n"
+
+        # B. Collecte des e-mails (Appel à la méthode résiliente)
+        try:
+            emails_to_process = await self.imap_service.fetch_unsynthesized_emails()
+        except Exception as e:
+            logger.error(f"Impossible de récupérer les e-mails pour la synthèse : {e}")
+            emails_to_process = []
+        
+        if emails_to_process:
+            consolidated_info += "--- E-MAILS DE LA JOURNÉE ---\n"
+            # Formatage propre des e-mails pour l'Agent de Synthèse
+            for mail in emails_to_process:
+                consolidated_info += f"De : {mail.expediteur}\n"
+                consolidated_info += f"Sujet : {mail.sujet}\n"
+                consolidated_info += f"Contenu :\n{mail.contenu_texte}\n"
+                consolidated_info += "-" * 30 + "\n\n"
+            
+        if not telegram_notes and not emails_to_process:
+             return "", []
+             
+        return consolidated_info, emails_to_process
+
+    async def _update_memoire_etablissement(self, daily_info: str) -> Optional[str]:
         """
-        pass
+        Orchestre la mécanique 'Read-Rewrite-Replace' pour le Fichier de mémoire de l'établissement.
+        """
+        logger.debug("Mise à jour du fichier Mémoire Etablissement...")
+        
+        # 1. Read
+        try:
+             current_markdown = await self.drive_service.download_file_content(self.memoire_file_id)
+        except Exception as e:
+            logger.error(f"Impossible de lire le fichier mémoire établissement actuel : {e}")
+            return None
+
+        # 2. Rewrite
+        new_markdown = await self.synth_agent.rewrite_memoire_etablissement_content(current_markdown, daily_info)
+        
+        if not new_markdown:
+             return None
+             
+        # Génération du résumé des modifications
+        summary = await self.synth_agent.generate_update_summary(current_markdown, new_markdown)
+
+        # 3. Replace
+        success = await self.drive_service.update_file_content(self.memoire_file_id, new_markdown)
+        
+        if success:
+            return summary
+        else:
+             logger.error("Échec de la sauvegarde du nouveau fichier de mémoire établissement.")
+             return None
+
+    async def _mark_history_as_synthesized(self) -> None:
+        """
+        Passe le flag 'est_synthetise' à True pour tous les messages locaux.
+        """
+        logger.debug("Marquage de l'historique Telegram comme synthétisé...")
+        if not self.history_file_path.exists():
+            return
+            
+        try:
+            content = self.history_file_path.read_text(encoding="utf-8")
+            chat_history = ChatHistory.model_validate_json(content)
+            
+            for turn in chat_history.turns:
+                turn.est_synthetise = True
+                
+            json_data = chat_history.model_dump_json(indent=2)
+            self.history_file_path.write_text(json_data, encoding="utf-8")
+        except Exception as e:
+            logger.error(f"Erreur lors du marquage de l'historique Telegram : {e}")
 
 
 ============================================================
