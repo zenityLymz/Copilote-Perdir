@@ -115,7 +115,7 @@ class PipelineAMails:
         logger.info(f"Traitement complet terminé pour l'e-mail {mail.id_mail}.")
 
 
-    async def index_sent_emails(self, folder: str = '"Sent"', limit: int = 50) -> None:
+    async def index_sent_emails(self, folder: str = "Sent", limit: int = 50) -> None:
         """
         Processus silencieux pour récupérer les e-mails envoyés par le Perdir,
         les indexer dans ChromaDB pour la recherche future, et les marquer comme traités.

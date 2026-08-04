@@ -54,7 +54,7 @@ async def run_pipeline_a_loop(pipeline_a: PipelineAMails, interval_seconds: int 
             await pipeline_a.run_pipeline(folder="INBOX", limit=50)
             
             # 2. Indexation silencieuse des e-mails envoyés par le Perdir
-            await pipeline_a.index_sent_emails(folder='"Sent"', limit=50)
+            await pipeline_a.index_sent_emails(folder="Sent", limit=50)
             
         except asyncio.CancelledError:
             logger.info("Arrêt de la boucle du Pipeline A.")
