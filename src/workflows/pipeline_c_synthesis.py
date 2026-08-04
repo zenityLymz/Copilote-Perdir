@@ -7,6 +7,7 @@ from src.services import GoogleDriveService, TelegramBotService, IMAPService
 from src.agents import SynthAgent
 from src.core import ChatHistory, MailObject
 from src.utils import get_logger
+from src.utils import get_logger, truncate_text_for_llm
 
 logger = get_logger(__name__)
 
@@ -135,7 +136,8 @@ class PipelineCSynthesis:
             for mail in emails_to_process:
                 consolidated_info += f"De : {mail.expediteur}\n"
                 consolidated_info += f"Sujet : {mail.sujet}\n"
-                consolidated_info += f"Contenu :\n{mail.contenu_texte}\n"
+                contenu_tronque = truncate_text_for_llm(mail.contenu_texte, max_tokens=800)
+                consolidated_info += f"Contenu :\n{contenu_tronque}\n"
                 consolidated_info += "-" * 30 + "\n\n"
             
         if not telegram_notes and not emails_to_process:

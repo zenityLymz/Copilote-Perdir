@@ -9,7 +9,7 @@ from typing import List, Optional
 from src.core.models import MailObject, TriDecision
 from src.core.exceptions import IMAPError
 from src.core.config import get_settings
-from src.utils import get_logger, extract_email_address, clean_html_content, estimate_token_count
+from src.utils import get_logger, extract_email_address, clean_html_content, estimate_token_count, truncate_text_for_llm, extract_text_from_attachment
 
 from email.message import EmailMessage
 import time
@@ -323,7 +323,8 @@ class IMAPService:
                 # Extraction du contenu texte et des PJ
                 contenu_texte = ""
                 pieces_jointes = []
-                
+                contenu_pj_brut = "" # Variable pour stocker le texte brut des PJ
+
                 if msg.is_multipart():
                     for part in msg.walk():
                         content_type = part.get_content_type()
@@ -333,8 +334,13 @@ class IMAPService:
                             filename = part.get_filename()
                             if filename:
                                 pieces_jointes.append(filename)
+                                
+                                # -- NOUVEAU : Tentative d'extraction du texte de la PJ --
+                                texte_extrait = extract_text_from_attachment(part, filename)
+                                if texte_extrait.strip():
+                                    contenu_pj_brut += f"\n\n--- PIÈCE JOINTE : {filename} ---\n{texte_extrait}"
                         
-                        # --- Prise en charge et nettoyage du HTML ---
+                        # --- Prise en charge et nettoyage du HTML (Corps du mail) ---
                         elif content_type in ["text/plain", "text/html"] and "attachment" not in content_disposition:
                             try:
                                 raw_text = part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
@@ -347,7 +353,6 @@ class IMAPService:
                 else:
                     try:
                         raw_payload = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
-                        # --- Nettoyage si le message unique est du HTML ---
                         if msg.get_content_type() == "text/html":
                             contenu_texte = clean_html_content(raw_payload)
                         else:
@@ -355,16 +360,22 @@ class IMAPService:
                     except Exception:
                         contenu_texte = str(msg.get_payload())
 
-                # Nettoyage final du texte
+                # Nettoyage final du texte principal
                 contenu_final = contenu_texte.strip() or "(Contenu vide ou illisible)"
                 
-                # --- Estimation des tokens ---
+                # -- NOUVEAU : Troncature et fusion des pièces jointes --
+                if contenu_pj_brut:
+                    # On protège le LLM en forçant une limite stricte de tokens sur l'ensemble des PJ
+                    contenu_pj_tronque = truncate_text_for_llm(contenu_pj_brut, max_tokens=1000)
+                    contenu_final += contenu_pj_tronque
+
+                # --- Estimation des tokens sur le total (Corps + PJ tronquées) ---
                 nb_tokens = estimate_token_count(contenu_final)
 
                 # Gestion sécurisée du décodage de l'ID IMAP
                 id_str = mail_id.decode('utf-8') if isinstance(mail_id, bytes) else str(mail_id)
 
-                # Instanciation de l'objet métier avec le nombre de tokens intégré
+                # Instanciation de l'objet métier
                 return MailObject(
                     id_mail=id_str,
                     date_reception=date_reception,

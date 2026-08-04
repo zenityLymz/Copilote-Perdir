@@ -50,13 +50,17 @@ logger = get_logger("MainApp")
 
 async def run_pipeline_a_loop(pipeline_a: PipelineAMails, interval_seconds: int = 300) -> None:
     """
-    Boucle infinie pour exécuter le Pipeline A (Triage des Mails) à intervalles réguliers.
+    Boucle infinie pour exécuter le Pipeline A (Triage des Mails et Indexation) à intervalles réguliers.
     """
-    logger.info("Démarrage de la tâche de fond : Pipeline A (Triage automatique).")
+    logger.info("Démarrage de la tâche de fond : Pipeline A (Triage automatique & Indexation des envois).")
     while True:
         try:
-            # Traitement des e-mails du dossier INBOX, par lots de 50 maximum
+            # 1. Traitement classique des e-mails entrants (Dossier de réception)
             await pipeline_a.run_pipeline(folder="INBOX", limit=50)
+            
+            # 2. Indexation silencieuse des e-mails envoyés par le Perdir
+            await pipeline_a.index_sent_emails(folder='"Sent"', limit=50)
+            
         except asyncio.CancelledError:
             logger.info("Arrêt de la boucle du Pipeline A.")
             break
@@ -1560,6 +1564,7 @@ B. GESTION DES E-MAILS :
   1. EXPANSION DE REQUÊTE : Si l'utilisateur te parle d'un expéditeur en particulier, ne cherche pas simplement des adresses e-mail exactes. Fournis des mots-clés, des synonymes et des rôles dans la `requete_semantique` (ex: pour "Dasen", cherche "Directeur académique, DASEN, cabinet, direction").
   2. CALCUL TEMPOREL : Utilise la date actuelle (fournie dans ton contexte) pour calculer de tête une fenêtre temporelle large si l'utilisateur utilise des termes vagues. Par exemple, pour "il y a deux mois", définis une `date_debut` et une `date_fin` encadrant largement cette période (au format ISO 8601).
   3. FILTRE EXPÉDITEUR : Si l'utilisateur mentionne un expéditeur particulier dont tu ignores le nom ou le mail exact, utilise d'abord l'outil rechercher_document_drive pour lire le fichier d'annuaire de l'établissement. Une fois le nom ou l'adresse trouvée, utilise le paramètre expediteur pour un filtrage ultra-précis. Si tu ne trouves rien dans l'annuaire mais que tu as un nom ou une adresse partielle (ex : ....infirmerie...), tu veux quand même renseigner le paramètre optionnel `expediteur` pour cibler la recherche car il n'y a pas besoin de l'adresse e-mail exacte (mais un élément contenu dans l'adresse suffit). Si tu n'as rien, laisse le paramètre `expediteur` vide.
+  4. RECHERCHE DANS LES ARCHIVES : Si l'utilisateur demande explicitement de chercher dans une année scolaire passée (ex: "l'an dernier", "en 2024", "il y a deux ans"), tu dois déduire l'année scolaire correspondante au format YYYY-YYYY (ex: "2024-2025" ou "2023-2024") en te basant sur la date actuelle, et passer cette valeur exacte dans le paramètre `annee_archive`. Par défaut, si la recherche concerne l'année scolaire en cours, laisse ce paramètre vide.
   - `enregistrer_brouillon_mail` : Pour enregistrer un brouillon d'e-mail dans le dossier Brouillons de la messagerie de l'utilisateur. Pour rédiger ce mail, tu dois t'appuyer sur les informations que tu as et en rechercher au préalable s'il t'en manque (avec `rechercher_dans_les_emails` ou `rechercher_document_drive` ou `gerer_agenda` ou, si nécessaire et en dernier recours en demandant des précisions à l'utilisateur).
 
 C. GESTION DOCUMENTAIRE ET INCIDENTS :
@@ -3722,9 +3727,11 @@ async def rechercher_info_drive(mots_cles: str) -> str:
 --- FICHIER : src/tools/mail_tools.py ---
 ============================================================
 
+import os
 from typing import Optional
 from src.utils import get_logger
 from src.core import get_imap_service, get_chroma_service
+from src.services.chroma_service import ChromaDBService
 
 # Initialisation du logger
 logger = get_logger(__name__)
@@ -3733,7 +3740,8 @@ async def rechercher_dans_les_emails(
     requete_semantique: str, 
     date_debut: Optional[str] = None, 
     date_fin: Optional[str] = None,
-    expediteur: Optional[str] = None
+    expediteur: Optional[str] = None,
+    annee_archive: Optional[str] = None
 ) -> str:
     """
     Interroge la mémoire vectorielle de l'établissement pour retrouver une information 
@@ -3757,7 +3765,7 @@ async def rechercher_dans_les_emails(
         date_debut (Optional[str]): Date de début de la fenêtre de recherche (format ISO 8601).
         date_fin (Optional[str]): Date de fin de la fenêtre de recherche (format ISO 8601).
         expediteur (Optional[str]): Le nom ou l'adresse e-mail (partielle ou complète) de l'expéditeur.
-
+        annee_archive (Optional[str]): Vide par défaut (recherche dans l'année en cours). Si l'utilisateur demande explicitement une recherche dans une année scolaire antérieure, doit être au format YYYY-YYYY (ex: "2024-2025").
     Returns:
         str: Le contexte textuel reconstitué à partir des e-mails les plus pertinents, 
              ou un message clair si rien n'a été trouvé.
@@ -3765,13 +3773,32 @@ async def rechercher_dans_les_emails(
     
     logger.info(
         f"Outil 'rechercher_dans_les_emails' appelé. Requête: '{requete_semantique}' | "
-        f"Expéditeur: '{expediteur}' | Période: {date_debut or 'Origine'} -> {date_fin or 'Aujourdhui'}"
+        f"Expéditeur: '{expediteur}' | Période: {date_debut or 'Origine'} -> {date_fin or 'Aujourdhui'} | Année archive: {annee_archive or 'Base courante'}"
     )
 
-    chroma_service = get_chroma_service()
+    # 1. Sélection dynamique de la base de données vectorielle
+    if annee_archive:
+        # On définit le chemin vers l'archive demandée
+        chemin_archive = f"data/chroma_db_{annee_archive}"
+        
+        # On vérifie d'abord si le dossier existe physiquement
+        if not os.path.exists(chemin_archive):
+            logger.warning(f"Tentative d'accès à une archive inexistante : {chemin_archive}")
+            return f"Erreur : L'archive demandée pour l'année '{annee_archive}' n'existe pas dans le système."
+        
+        try:
+            logger.debug(f"Connexion à la volée à l'archive vectorielle : {chemin_archive}")
+            # Instanciation dynamique. (ChromaDB gère son propre cache interne pour ne pas recharger bêtement)
+            chroma_service = ChromaDBService(persist_directory=chemin_archive)
+        except Exception as e:
+            logger.error(f"Impossible de monter l'archive {chemin_archive} en mémoire : {e}", exc_info=True)
+            return f"Erreur technique lors du chargement de l'archive '{annee_archive}'."
+    else:
+        # Cas classique : on récupère l'instance Singleton de l'année en cours
+        chroma_service = get_chroma_service()
     
     try:
-        # 1. Construction dynamique des conditions de filtrage ChromaDB
+        # 2. Construction dynamique des conditions de filtrage ChromaDB
         conditions = []
         
         if date_debut:
@@ -3783,7 +3810,7 @@ async def rechercher_dans_les_emails(
             # (ex: "Jean Dupont <jean.dupont@ac-lyon.fr>")
             conditions.append({"expediteur": {"$contains": expediteur}})
             
-        # 2. Assemblage final du filter_metadata
+        # 3. Assemblage final du filter_metadata
         filter_metadata = None
         if len(conditions) > 1:
             # ChromaDB nécessite $and pour de multiples conditions
@@ -3792,7 +3819,7 @@ async def rechercher_dans_les_emails(
             # S'il n'y a qu'une seule condition, on la passe directement
             filter_metadata = conditions[0]
 
-        # 3. Recherche vectorielle avec sur-échantillonnage (15 résultats au lieu de 5)
+        # 4. Recherche vectorielle avec sur-échantillonnage (15 résultats au lieu de 5)
         resultats = await chroma_service.search_semantic(
             query=requete_semantique, 
             n_results=15, 
@@ -3800,9 +3827,10 @@ async def rechercher_dans_les_emails(
         )
         
         if not resultats:
-            return "Aucun e-mail pertinent n'a été trouvé dans la base de données pour cette recherche (avec les filtres spécifiés)."
+            mention_archive = f" dans l'archive {annee_archive}" if annee_archive else " dans la base courante"
+            return f"Aucun e-mail pertinent n'a été trouvé{mention_archive} pour cette recherche (avec les filtres spécifiés)."
             
-        # 4. Formatage pour l'ingestion par l'Orchestrateur
+        # 5. Formatage pour l'ingestion par l'Orchestrateur
         contexte_formate = "Voici les extraits d'e-mails trouvés dans la base de données :\n\n"
         
         for i, res in enumerate(resultats, 1):
@@ -4386,6 +4414,41 @@ class PipelineAMails:
         logger.info(f"Traitement complet terminé pour l'e-mail {mail.id_mail}.")
 
 
+    async def index_sent_emails(self, folder: str = '"Sent"', limit: int = 50) -> None:
+        """
+        Processus silencieux pour récupérer les e-mails envoyés par le Perdir,
+        les indexer dans ChromaDB pour la recherche future, et les marquer comme traités.
+        Aucune IA n'est sollicitée ici pour économiser les quotas.
+        
+        Args:
+            folder (str): Le nom du dossier des éléments envoyés.
+            limit (int): Le nombre maximum d'e-mails à traiter par cycle.
+        """
+        logger.info(f"Démarrage de l'indexation silencieuse sur le dossier {folder}.")
+        
+        try:
+            # 1. Récupération des e-mails envoyés qui n'ont pas encore le flag 'CopiloteTraite'
+            emails: List[MailObject] = await self.imap_service.fetch_unread_emails(folder=folder, limit=limit)
+            
+            if not emails:
+                logger.debug(f"Aucun nouvel e-mail à indexer dans {folder}.")
+                return
+                
+            logger.info(f"{len(emails)} nouvel/nouveaux e-mail(s) envoyé(s) récupéré(s). Début de l'indexation.")
+
+            # 2. Indexation en lot dans ChromaDB (très rapide)
+            await self.chroma_service.index_emails(emails)
+            
+            # 3. Marquage comme traité pour qu'ils soient ignorés aux prochains cycles
+            for mail in emails:
+                await self.imap_service.mark_as_processed(mail.id_mail)
+                
+            logger.info(f"Indexation silencieuse de {len(emails)} e-mails envoyés terminée avec succès.")
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de l'indexation silencieuse du dossier {folder} : {e}", exc_info=True)
+
+
 ============================================================
 --- FICHIER : src/workflows/pipeline_b_telegram.py ---
 ============================================================
@@ -4604,6 +4667,7 @@ from src.services import GoogleDriveService, TelegramBotService, IMAPService
 from src.agents import SynthAgent
 from src.core import ChatHistory, MailObject
 from src.utils import get_logger
+from src.utils import get_logger, truncate_text_for_llm
 
 logger = get_logger(__name__)
 
@@ -4732,7 +4796,8 @@ class PipelineCSynthesis:
             for mail in emails_to_process:
                 consolidated_info += f"De : {mail.expediteur}\n"
                 consolidated_info += f"Sujet : {mail.sujet}\n"
-                consolidated_info += f"Contenu :\n{mail.contenu_texte}\n"
+                contenu_tronque = truncate_text_for_llm(mail.contenu_texte, max_tokens=800)
+                consolidated_info += f"Contenu :\n{contenu_tronque}\n"
                 consolidated_info += "-" * 30 + "\n\n"
             
         if not telegram_notes and not emails_to_process:

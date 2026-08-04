@@ -209,3 +209,56 @@ def split_telegram_message(text: str, max_length: int = 4096) -> List[str]:
         chunks.append(text)
         
     return chunks
+
+import io
+
+# Imports conditionnels pour éviter un crash si les dépendances ne sont pas installées
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
+    import docx
+except ImportError:
+    docx = None
+
+def extract_text_from_attachment(part, filename: str) -> str:
+    """
+    Extrait le texte brut d'une pièce jointe (PDF, DOCX, TXT) de manière sécurisée.
+    Conçu pour être léger sur un Raspberry Pi.
+    """
+    if not filename:
+        return ""
+
+    ext = filename.split('.')[-1].lower()
+    if ext not in ['txt', 'pdf', 'docx', 'doc']:
+        return ""
+
+    try:
+        payload = part.get_payload(decode=True)
+        if not payload:
+            return ""
+
+        if ext == 'txt':
+            return payload.decode(part.get_content_charset() or 'utf-8', errors='replace')
+
+        elif ext == 'pdf' and PdfReader:
+            reader = PdfReader(io.BytesIO(payload))
+            # On limite la lecture aux 10 premières pages pour préserver le CPU du Raspberry
+            text_pages = [page.extract_text() for page in reader.pages[:10] if page.extract_text()]
+            return "\n".join(text_pages)
+
+        elif ext == 'docx' and docx:
+            doc = docx.Document(io.BytesIO(payload))
+            return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+
+        elif ext == 'doc':
+            return "[Format obsolète (.doc) non analysé. Demandez un format .docx ou .pdf]"
+            
+        else:
+            return f"[Impossible de lire le fichier {filename} : bibliothèques manquantes]"
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la lecture de la PJ '{filename}' : {e}")
+        return f"[Erreur technique lors de la lecture du fichier {filename}]"

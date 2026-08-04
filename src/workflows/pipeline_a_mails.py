@@ -113,3 +113,38 @@ class PipelineAMails:
             await self.imap_service.move_email(decision)
 
         logger.info(f"Traitement complet terminé pour l'e-mail {mail.id_mail}.")
+
+
+    async def index_sent_emails(self, folder: str = '"Sent"', limit: int = 50) -> None:
+        """
+        Processus silencieux pour récupérer les e-mails envoyés par le Perdir,
+        les indexer dans ChromaDB pour la recherche future, et les marquer comme traités.
+        Aucune IA n'est sollicitée ici pour économiser les quotas.
+        
+        Args:
+            folder (str): Le nom du dossier des éléments envoyés.
+            limit (int): Le nombre maximum d'e-mails à traiter par cycle.
+        """
+        logger.info(f"Démarrage de l'indexation silencieuse sur le dossier {folder}.")
+        
+        try:
+            # 1. Récupération des e-mails envoyés qui n'ont pas encore le flag 'CopiloteTraite'
+            emails: List[MailObject] = await self.imap_service.fetch_unread_emails(folder=folder, limit=limit)
+            
+            if not emails:
+                logger.debug(f"Aucun nouvel e-mail à indexer dans {folder}.")
+                return
+                
+            logger.info(f"{len(emails)} nouvel/nouveaux e-mail(s) envoyé(s) récupéré(s). Début de l'indexation.")
+
+            # 2. Indexation en lot dans ChromaDB (très rapide)
+            await self.chroma_service.index_emails(emails)
+            
+            # 3. Marquage comme traité pour qu'ils soient ignorés aux prochains cycles
+            for mail in emails:
+                await self.imap_service.mark_as_processed(mail.id_mail)
+                
+            logger.info(f"Indexation silencieuse de {len(emails)} e-mails envoyés terminée avec succès.")
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de l'indexation silencieuse du dossier {folder} : {e}", exc_info=True)

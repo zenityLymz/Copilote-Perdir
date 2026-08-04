@@ -45,13 +45,17 @@ logger = get_logger("MainApp")
 
 async def run_pipeline_a_loop(pipeline_a: PipelineAMails, interval_seconds: int = 300) -> None:
     """
-    Boucle infinie pour exécuter le Pipeline A (Triage des Mails) à intervalles réguliers.
+    Boucle infinie pour exécuter le Pipeline A (Triage des Mails et Indexation) à intervalles réguliers.
     """
-    logger.info("Démarrage de la tâche de fond : Pipeline A (Triage automatique).")
+    logger.info("Démarrage de la tâche de fond : Pipeline A (Triage automatique & Indexation des envois).")
     while True:
         try:
-            # Traitement des e-mails du dossier INBOX, par lots de 50 maximum
+            # 1. Traitement classique des e-mails entrants (Dossier de réception)
             await pipeline_a.run_pipeline(folder="INBOX", limit=50)
+            
+            # 2. Indexation silencieuse des e-mails envoyés par le Perdir
+            await pipeline_a.index_sent_emails(folder='"Sent"', limit=50)
+            
         except asyncio.CancelledError:
             logger.info("Arrêt de la boucle du Pipeline A.")
             break
