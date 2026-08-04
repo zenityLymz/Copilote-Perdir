@@ -94,7 +94,8 @@ class GoogleDriveService:
         """
         Recherche un fichier ou un dossier par son nom exact dans le Drive.
         """
-        return await asyncio.to_thread(self._find_file_or_folder_sync, name, mime_type, parent_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._find_file_or_folder_sync, name, mime_type, parent_id)
 
     def _find_file_or_folder_sync(self, name: str, mime_type: Optional[str] = None, parent_id: Optional[str] = None) -> Optional[str]:
         if not self.service:
@@ -125,7 +126,8 @@ class GoogleDriveService:
         """
         Crée un nouveau dossier.
         """
-        return await asyncio.to_thread(self._create_folder_sync, folder_name, parent_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._create_folder_sync, folder_name, parent_id)
 
     def _create_folder_sync(self, folder_name: str, parent_id: Optional[str] = None) -> str:
         if not self.service:
@@ -215,7 +217,8 @@ class GoogleDriveService:
         """
         Recherche plein texte dans le Drive. Retourne l'ID, le nom, le type et le lien d'accès.
         """
-        return await asyncio.to_thread(self._search_files_by_content_sync, query_string, limit)
+        async with self._lock:
+            return await asyncio.to_thread(self._search_files_by_content_sync, query_string, limit)
 
     def _search_files_by_content_sync(self, query_string: str, limit: int) -> List[Dict[str, Any]]:
         if not self.service:

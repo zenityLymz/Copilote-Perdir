@@ -20,6 +20,7 @@ class GoogleCalendarTasksService:
         self.drive_service = drive_service
         self.token_path = getattr(drive_service, 'token_path', 'token.json')
         self.timezone = pytz.timezone("Europe/Paris")
+        self._lock = asyncio.Lock()
         logger.debug("GoogleCalendarTasksService initialisé.")
 
     def _get_calendar_service(self):
@@ -37,7 +38,8 @@ class GoogleCalendarTasksService:
 
     async def list_calendar_events(self, date_cible: datetime, date_fin: Optional[datetime] = None) -> List[Dict[str, Any]]:
         """Récupère les événements d'une journée ou d'une période spécifique."""
-        return await asyncio.to_thread(self._list_calendar_events_sync, date_cible, date_fin)
+        async with self._lock:
+            return await asyncio.to_thread(self._list_calendar_events_sync, date_cible, date_fin)
 
     def _list_calendar_events_sync(self, date_cible: datetime, date_fin: Optional[datetime]) -> List[Dict[str, Any]]:
         service = self._get_calendar_service()
@@ -68,7 +70,8 @@ class GoogleCalendarTasksService:
 
     async def create_calendar_event(self, request: AgendaTaskRequest, duree_minutes: int, lieu: Optional[str] = None) -> Dict[str, str]:
         """Crée un événement avec gestion du lieu."""
-        return await asyncio.to_thread(self._create_calendar_event_sync, request, duree_minutes, lieu)
+        async with self._lock:
+            return await asyncio.to_thread(self._create_calendar_event_sync, request, duree_minutes, lieu)
 
     def _create_calendar_event_sync(self, request: AgendaTaskRequest, duree_minutes: int, lieu: Optional[str]) -> Dict[str, str]:
         service = self._get_calendar_service()
@@ -97,7 +100,8 @@ class GoogleCalendarTasksService:
 
     async def delete_calendar_event(self, event_id: str) -> bool:
         """Supprime un événement via son ID."""
-        return await asyncio.to_thread(self._delete_calendar_event_sync, event_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._delete_calendar_event_sync, event_id)
 
     def _delete_calendar_event_sync(self, event_id: str) -> bool:
         service = self._get_calendar_service()
@@ -111,7 +115,8 @@ class GoogleCalendarTasksService:
 
     async def modify_calendar_event(self, event_id: str, new_date: Optional[datetime] = None, new_title: Optional[str] = None, duree_minutes: Optional[int] = None, lieu: Optional[str] = None, description: Optional[str] = None) -> str:
         """Met à jour partiellement (PATCH) un événement existant."""
-        return await asyncio.to_thread(self._modify_calendar_event_sync, event_id, new_date, new_title, duree_minutes, lieu, description)
+        async with self._lock:
+            return await asyncio.to_thread(self._modify_calendar_event_sync, event_id, new_date, new_title, duree_minutes, lieu, description)
 
     def _modify_calendar_event_sync(self, event_id: str, new_date: Optional[datetime], new_title: Optional[str], duree_minutes: Optional[int], lieu: Optional[str], description: Optional[str]) -> str:
         service = self._get_calendar_service()
@@ -166,7 +171,8 @@ class GoogleCalendarTasksService:
 
     async def list_google_tasks(self, include_completed: bool = False) -> List[Dict[str, Any]]:
         """Récupère la liste des tâches (par défaut, uniquement celles non terminées)."""
-        return await asyncio.to_thread(self._list_google_tasks_sync, include_completed)
+        async with self._lock:
+            return await asyncio.to_thread(self._list_google_tasks_sync, include_completed)
 
     def _list_google_tasks_sync(self, include_completed: bool) -> List[Dict[str, Any]]:
         service = self._get_tasks_service()
@@ -184,7 +190,8 @@ class GoogleCalendarTasksService:
 
     async def create_google_task(self, titre: str, date_cible: Optional[datetime] = None, description: Optional[str] = None) -> str:
         """Crée une nouvelle tâche et retourne son ID."""
-        return await asyncio.to_thread(self._create_google_task_sync, titre, date_cible, description)
+        async with self._lock:
+            return await asyncio.to_thread(self._create_google_task_sync, titre, date_cible, description)
 
     def _create_google_task_sync(self, titre: str, date_cible: Optional[datetime], description: Optional[str]) -> str:
         service = self._get_tasks_service()
@@ -206,7 +213,8 @@ class GoogleCalendarTasksService:
 
     async def complete_google_task(self, task_id: str) -> bool:
         """Marque une tâche comme 'terminée' (cochée)."""
-        return await asyncio.to_thread(self._complete_google_task_sync, task_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._complete_google_task_sync, task_id)
 
     def _complete_google_task_sync(self, task_id: str) -> bool:
         service = self._get_tasks_service()
@@ -225,7 +233,8 @@ class GoogleCalendarTasksService:
 
     async def delete_google_task(self, task_id: str) -> bool:
         """Supprime définitivement une tâche."""
-        return await asyncio.to_thread(self._delete_google_task_sync, task_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._delete_google_task_sync, task_id)
 
     def _delete_google_task_sync(self, task_id: str) -> bool:
         service = self._get_tasks_service()
@@ -239,7 +248,8 @@ class GoogleCalendarTasksService:
 
     async def modify_google_task(self, task_id: str, new_title: Optional[str] = None, new_due: Optional[datetime] = None, new_notes: Optional[str] = None) -> str:
         """Met à jour une tâche existante (PATCH)."""
-        return await asyncio.to_thread(self._modify_google_task_sync, task_id, new_title, new_due, new_notes)
+        async with self._lock:
+            return await asyncio.to_thread(self._modify_google_task_sync, task_id, new_title, new_due, new_notes)
 
     def _modify_google_task_sync(self, task_id: str, new_title: Optional[str], new_due: Optional[datetime], new_notes: Optional[str]) -> str:
         service = self._get_tasks_service()

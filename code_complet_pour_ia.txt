@@ -191,7 +191,8 @@ async def main() -> None:
             telegram_service=telegram_service,
             imap_service=imap_service,
             synth_agent=synth_agent,
-            memoire_file_id=settings.MEMOIRE_FILE_ID
+            memoire_file_id=settings.MEMOIRE_FILE_ID,
+            pipeline_b=pipeline_b
         )
 
         # 5. Démarrage des tâches asynchrones parallèles
@@ -200,7 +201,7 @@ async def main() -> None:
         # Le rassemblement des tâches dans asyncio.gather assure le fonctionnement en concurrence 100% Async
         await asyncio.gather(
             telegram_service.start_polling(),                       # Écoute Telegram en Long Polling
-            run_pipeline_a_loop(pipeline_a, interval_seconds=300),  # Relève des mails toutes les 5 minutes
+            run_pipeline_a_loop(pipeline_a, interval_seconds=180),  # Relève des mails toutes les 3 minutes
             run_pipeline_c_loop(pipeline_c, target_hour=18)         # Synthèse programmée à partir de 18h
         )
 
@@ -1650,33 +1651,76 @@ def get_pilotage_system_prompt() -> str:
     Returns:
         str: Le prompt système imposant les règles strictes de fusion et de format de sortie.
     """
-    return """Tu es le Directeur de Cabinet (IA) d'un chef d'établissement scolaire (Perdir).
-        Ta mission est de tenir à jour la "Mémoire de l'Établissement", un document au format Markdown contenant 3 sections : 
-        - le suivi des dossiers structurants servant au pilotage de l'établissement (RH, Bâti, Finances, Pédagogie)
-        - l'annuaire des personnels (noms, prénoms, fonctions, contacts)
-        - les us et coutumes locaux, les "choses à savoir" pour les nouveaux arrivants (ex: "le gardien s'appelle Michel", "la salle des profs est au 2e étage", etc.)
+    return """Tu es le Directeur de Cabinet (IA) du Chef d'Établissement (Perdir) d'un collège/lycée public.
+Ta mission est de tenir à jour la "Mémoire de l'Établissement", un document au format Markdown épuré qui sert de registre de pilotage, de cartographie humaine et de mémoire vive de l'établissement.
 
-        Pour cela, tu vas recevoir chaque soir deux types d'informations :
-        1. Le contenu actuel du fichier Markdown de Mémoire de l'Établissement (version brute, non formatée).
-        2. Les événements de la journée (e-mails et échanges Telegram entre le chef d'établissement et son assistant IA), qui peuvent contenir des informations stratégiques ou du bruit éphémère.
+Tu vas recevoir chaque soir :
+1. Le contenu actuel du fichier Markdown de Mémoire de l'Établissement.
+2. Les événements de la journée (e-mails et échanges Telegram/notes du Perdir).
 
-        MÉCANIQUE DE MISE À JOUR (Read-Rewrite-Replace) :
-        Tu dois réécrire intégralement le document en y intégrant les nouvelles informations aux bons endroits, en respectant strictement l'arborescence Markdown existante.
-        Attention, tu manipules un fichier critique. Les modifications apportées doivent être pertinentes, justifiées, durables et ne pas altérer les sections existantes qui ne sont pas concernées par les nouvelles données.
-        Tu récupères les informations d'une seule journée donc les modifications sont généralement mineures. Par conséquent, il n'est pas envisageable de modifer une grande proportion du document sauf si les nouvelles informations le justifient.
+============================================================
+MÉCANIQUE DE MISE À JOUR (Read-Rewrite-Replace)
+============================================================
+Tu dois réécrire INTÉGRALEMENT le document en y intégrant les nouvelles informations aux bons endroits, en respectant rigoureusement la structure Markdown existante (Titres # et ##).
 
-        RÈGLES STRICTES D'ANALYSE (Filtrage du bruit) :
-        1. EXCLUSION : Ignore totalement les informations éphémères, périssables ou sans intérêt à long terme (ex: un retard ponctuel, l'absence d'un élève un jour donné, une prise de RDV, un spam, un mail de confirmation banal).
-        2. INCLUSION : Consigne tout ce qui est stratégique, structurel, ou utile pour la connaissance du terrain (ex: avancement d'un chantier, climat scolaire, tensions RH, nouvelles subventions, nouvelles procédures, nouvelle adresse mail d'un prof, informations utiles comme "le gardien s'appelle Michel, je le tutoie", etc.).
-        3. CONSERVATION DE L'EXISTANT : Toute information existante qui n'est pas affectée par les nouvelles données doit être conservée telle quelle. Tu as le droit, si c'est vraiment pertinent, de modifier certains éléments existants, voire d'en supprimer, mais cela doit être jusitfié logiquement par les nouvelles informations acquises, qui doivent venir d'une source fiable.
-        4. STRUCTURE : Ne casse jamais l'arborescence Markdown existante (Titres #). Ajoute de nouvelles sous-rubriques uniquement si cela s'avère absolument indispensable pour classer une nouvelle information majeure.
+1. EXCLUSION DU BRUIT : Ignore les informations éphémères ou sans valeur stratégique (retards ponctuels, spams, confirmations banales).
+2. INCLUSION STRATÉGIQUE : Consigne tout ce qui impacte le pilotage, les RH, la sécurité, le climat scolaire ou la connaissance du terrain.
+3. CONSERVATION : Tout ce qui n'est pas modifié ou contredit par une nouvelle donnée FIABLE doit être conservé.
 
-        CONTRAINTE DE SORTIE ABSOLUE (CRITIQUE) :
-        Le texte que tu vas générer écrasera directement le fichier source original sur le serveur.
-        Par conséquent, tu dois renvoyer UNIQUEMENT le code Markdown intégral mis à jour.
-        - N'ajoute AUCUN texte d'introduction (Interdiction d'écrire "Voici le fichier mis à jour :").
-        - N'ajoute AUCUN texte de conclusion.
-        - N'encadre SURTOUT PAS ta réponse avec des balises de bloc de code (comme ```markdown ou ```). Renvoie le texte nu.
+============================================================
+RÈGLES TEMPORELLES ET GESTION DES ENCOURS (CRITIQUE)
+============================================================
+- Utilise des marqueurs temporels (Mois/Année ou Date exacte) pour situer les événements dans le temps.
+- Lorsqu'un événement daté ou prévu (ex: un CA, une réunion, un exercice) est PASSÉ :
+  a) Si tu as reçu le bilan/compte-rendu dans les données du jour : remplace l'événement anticipé par son bilan factuel.
+  b) Si tu n'as reçu AUCUNE information sur le déroulement : NE SUPPRIME PAS l'événement et n'invente rien. Conserve le contexte initial et ajoute la mention exacte : [BILAN EN ATTENTE].
+
+============================================================
+GUIDE SÉMANTIQUE DE L'ARBORESTENCE (GRILLAGE DE LECTURE)
+============================================================
+Voici la structure du fichier avec une brève description de chaque section du document pour t'aider à comprendre l'intention de chaque partie et à y placer correctement les nouvelles informations.
+
+# 🧭 1. PILOTAGE STRATÉGIQUE ET INSTANCES
+## 1.1 Instances de Gouvernance (CA, CP, Conseil Pédagogique) : Ordres du jour, motions, décisions, votes de la CP/CA, points de tension institutionnels.
+## 1.2 Projet d'Établissement et Évaluation (Contrat d'objectifs) : Auto-évaluation, axes stratégiques, contrat d'objectifs, indicateurs d'efficacité (DNB, Bac).
+## 1.3 Pilotage des Moyens (DHG et TRM) : Répartition de la Dotation Horaire Globale, HSA/HSE, IMP, créations/fermetures de classes, BMP.
+## 1.4 Dispositifs Pédagogiques et Inclusion : Groupes de besoins, Pacte enseignant, Devoirs Faits, Pôle d'Appui à la Scolarité (PAS), dispositif d'inclusion scolaire, projets d'innovation.
+## 1.5 Environnement, Partenariats et Relations Institutionnelles : Consignes DASEN/Rectorat/Inspection, conventions gendarmerie/police, partenariats entreprises (stages), associations, réseau école-collège, réseaux d'établissements, relations avec les collectivités.
+
+# 👥 2. R.H. ET CARTOGRAPHIE DES ACTEURS
+## 2.1 Équipe de Direction et Administration : Structure de l'équipe de direction et des services administratifs, répartition des dossiers Direction/Adjoint/Gestionnaire, secrétariat.
+## 2.2 Équipe Pédagogique (Enseignants) : Dynamiques par discipline, professeurs principaux, coordonnateurs, gestion globale des remplacements (TZR/Contractuels), besoins de formation. (Pas de détails médicaux ou disciplinaires nominatifs).
+## 2.3 Pôle Vie Scolaire et Inclusion (CPE, AED, AESH) : Équipe CPE, management et contrats AED, affectations/mouvements des AESH.
+## 2.4 Agents Techniques et Territoriaux (Collectivité) : Personnels de cuisine, entretien, accueil, demandes de remplacement à la Mairie/Département/Région.
+## 2.5 Climat Social, Syndicats et Médecine du Travail : Représentants syndicaux locaux, registres RSST, préavis de grève, santé au travail.
+
+# 🏫 3. BÂTI, FINANCES ET SÉCURITÉ
+## 3.1 Budget et Pilotage Financier : Vote du budget, DBM, fonds sociaux (aides aux familles), subventions obtenues, tarifs.
+## 3.2 Bâti, Travaux et Relations avec la Collectivité : Gros chantiers, pannes majeures (chauffage, fuites), diagnostics (amiante), demandes à la collectivité.
+## 3.3 Sécurité, Sûreté et Registres Obligatoires : PPMS (exercices), incendie, commissions de sécurité, DUER, portails et alarmes.
+## 3.4 Restauration Scolaire (Demi-pension) et Logistique : Climat à la cantine, impayés, fonctionnement du service de restauration, transports.
+## 3.5 Infrastructures Numériques et Équipements : Fibre, réseau, serveurs, parc informatique, photocopieurs.
+
+# 🛡️ 4. CLIMAT SCOLAIRE ET VIE DE L'ÉLÈVE
+## 4.1 Discipline, Climat Scolaire et Harcèlement (pHARe) : Tendances globales du climat scolaire, bilans statistiques des conseils de discipline/exclusions, fonctionnement de l'équipe ressource pHARe, actions de prévention. AUCUN CAS NOMINATIF INDIVIDUEL.
+## 4.2 Santé, Action Sociale et Organisation Médico-scolaire : Organisation générale du Pôle Médico-Social (permanences infirmière/AS/PsyEN), protocoles sanitaires d'établissement, aménagements structurels d'accessibilité (handicap matériel), organisation des CESCE et instances éducatives. AUCUNE DONNÉE NOMINATIVE D'ÉLÈVE OU PAI/IP INDIVIDUEL ICI.
+## 4.3 Engagement Élève (CVC/CVL, Éco-délégués, FSE) : Projets CVC/CVL, actions des éco-délégués, activités du FSE/MDL et clubs.
+## 4.4 Les Parcours Éducatifs et l'Orientation : Suivi stratégique des 4 parcours (Parcours Avenir, PEAC, Parcours Citoyen, Parcours Éducatif de Santé), procédures Affelnet/Parcoursup, orientation et liaison 3e/2de.
+## 4.5 Relations avec les Familles et Représentants des Parents : Dynamique avec les associations (FCPE/PEEP), réunions d'information, analyse globale des points de tension récurrents avec les parents.
+
+# ☕ 5. USAGES, HISTORIQUE ET CULTURE LOCALE
+## 5.1 Histoire de l'Établissement et Mémoire du Territoire : Crises passées, particularités du bassin, historique des anciens personnels.
+## 5.2 "Choses à Savoir" et Règles Non Écrites : Habitudes du personnel, sensibilités politiques/locales, personnalités clés à ménager.
+## 5.3 Événements Marquants et Ritologiques : Cross, bal de promotion, fête de fin d'année, Portes Ouvertes (JPO).
+## 5.4 Partenariats Informels, Amicale et Réseaux Locaux : Amicale du personnel, réseau informel de commerçants/acteurs locaux.
+
+============================================================
+CONTRAINTE DE SORTIE ABSOLUE (CRITIQUE)
+============================================================
+Le texte généré va ÉCRASER directement le fichier source `.md`.
+- Renvoyer UNIQUEMENT le code Markdown mis à jour.
+- N'ajoute AUCUNE introduction ("Voici le document..."), AUCUNE conclusion.
+- N'encadre SURTOUT PAS ta réponse dans des balises de code (```markdown ou ```). Renvoie le texte NU.
         """
 
 def build_pilotage_update_prompt(current_content: str, daily_info: str) -> str:
@@ -1694,13 +1738,13 @@ def build_pilotage_update_prompt(current_content: str, daily_info: str) -> str:
     """
     return f"""Voici les données pour la mise à jour de la Mémoire de l'Établissement.
 
-        --- DÉBUT DES ÉVÉNEMENTS DE LA JOURNÉE ---
-        {daily_info}
-        --- FIN DES ÉVÉNEMENTS DE LA JOURNÉE ---
-
         --- DÉBUT DU DOCUMENT ACTUEL (À METTRE À JOUR) ---
         {current_content}
         --- FIN DU DOCUMENT ACTUEL ---
+                
+        --- DÉBUT DES ÉVÉNEMENTS DE LA JOURNÉE ---
+        {daily_info}
+        --- FIN DES ÉVÉNEMENTS DE LA JOURNÉE ---
 
         Évalue les événements de la journée, filtre les informations éphémères, intègre les nouveautés pertinentes et renvoie la nouvelle version intégrale du document en respectant rigoureusement les contraintes de sortie absolues (texte brut uniquement).
         """
@@ -1892,6 +1936,7 @@ class ChromaDBService:
         """
         self.persist_directory = persist_directory
         self.logger = get_logger(__name__)
+        self._lock = asyncio.Lock()
         
         try:
             # Récupération de la configuration
@@ -1932,7 +1977,8 @@ class ChromaDBService:
         if not emails:
             return
             
-        await asyncio.to_thread(self._index_emails_sync, emails)
+        async with self._lock:
+            await asyncio.to_thread(self._index_emails_sync, emails)
 
     def _index_emails_sync(self, emails: List[MailObject]) -> None:
         """Logique synchrone d'indexation déléguée dans un thread."""
@@ -1980,7 +2026,8 @@ class ChromaDBService:
         Returns:
             List[Dict]: Les documents trouvés, incluant le texte d'origine, les distances et les métadonnées.
         """
-        return await asyncio.to_thread(self._search_semantic_sync, query, n_results, filter_metadata)
+        async with self._lock:
+            return await asyncio.to_thread(self._search_semantic_sync, query, n_results, filter_metadata)
 
     def _search_semantic_sync(self, query: str, n_results: int, filter_metadata: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Logique synchrone de requête (RAG)."""
@@ -2022,7 +2069,8 @@ class ChromaDBService:
         Returns:
             bool: True si la suppression a réussi, False sinon.
         """
-        return await asyncio.to_thread(self._delete_email_sync, mail_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._delete_email_sync, mail_id)
 
     def _delete_email_sync(self, mail_id: str) -> bool:
         """Logique synchrone de suppression dans la collection."""
@@ -2063,6 +2111,7 @@ class GoogleCalendarTasksService:
         self.drive_service = drive_service
         self.token_path = getattr(drive_service, 'token_path', 'token.json')
         self.timezone = pytz.timezone("Europe/Paris")
+        self._lock = asyncio.Lock()
         logger.debug("GoogleCalendarTasksService initialisé.")
 
     def _get_calendar_service(self):
@@ -2080,7 +2129,8 @@ class GoogleCalendarTasksService:
 
     async def list_calendar_events(self, date_cible: datetime, date_fin: Optional[datetime] = None) -> List[Dict[str, Any]]:
         """Récupère les événements d'une journée ou d'une période spécifique."""
-        return await asyncio.to_thread(self._list_calendar_events_sync, date_cible, date_fin)
+        async with self._lock:
+            return await asyncio.to_thread(self._list_calendar_events_sync, date_cible, date_fin)
 
     def _list_calendar_events_sync(self, date_cible: datetime, date_fin: Optional[datetime]) -> List[Dict[str, Any]]:
         service = self._get_calendar_service()
@@ -2111,7 +2161,8 @@ class GoogleCalendarTasksService:
 
     async def create_calendar_event(self, request: AgendaTaskRequest, duree_minutes: int, lieu: Optional[str] = None) -> Dict[str, str]:
         """Crée un événement avec gestion du lieu."""
-        return await asyncio.to_thread(self._create_calendar_event_sync, request, duree_minutes, lieu)
+        async with self._lock:
+            return await asyncio.to_thread(self._create_calendar_event_sync, request, duree_minutes, lieu)
 
     def _create_calendar_event_sync(self, request: AgendaTaskRequest, duree_minutes: int, lieu: Optional[str]) -> Dict[str, str]:
         service = self._get_calendar_service()
@@ -2140,7 +2191,8 @@ class GoogleCalendarTasksService:
 
     async def delete_calendar_event(self, event_id: str) -> bool:
         """Supprime un événement via son ID."""
-        return await asyncio.to_thread(self._delete_calendar_event_sync, event_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._delete_calendar_event_sync, event_id)
 
     def _delete_calendar_event_sync(self, event_id: str) -> bool:
         service = self._get_calendar_service()
@@ -2154,7 +2206,8 @@ class GoogleCalendarTasksService:
 
     async def modify_calendar_event(self, event_id: str, new_date: Optional[datetime] = None, new_title: Optional[str] = None, duree_minutes: Optional[int] = None, lieu: Optional[str] = None, description: Optional[str] = None) -> str:
         """Met à jour partiellement (PATCH) un événement existant."""
-        return await asyncio.to_thread(self._modify_calendar_event_sync, event_id, new_date, new_title, duree_minutes, lieu, description)
+        async with self._lock:
+            return await asyncio.to_thread(self._modify_calendar_event_sync, event_id, new_date, new_title, duree_minutes, lieu, description)
 
     def _modify_calendar_event_sync(self, event_id: str, new_date: Optional[datetime], new_title: Optional[str], duree_minutes: Optional[int], lieu: Optional[str], description: Optional[str]) -> str:
         service = self._get_calendar_service()
@@ -2209,7 +2262,8 @@ class GoogleCalendarTasksService:
 
     async def list_google_tasks(self, include_completed: bool = False) -> List[Dict[str, Any]]:
         """Récupère la liste des tâches (par défaut, uniquement celles non terminées)."""
-        return await asyncio.to_thread(self._list_google_tasks_sync, include_completed)
+        async with self._lock:
+            return await asyncio.to_thread(self._list_google_tasks_sync, include_completed)
 
     def _list_google_tasks_sync(self, include_completed: bool) -> List[Dict[str, Any]]:
         service = self._get_tasks_service()
@@ -2227,7 +2281,8 @@ class GoogleCalendarTasksService:
 
     async def create_google_task(self, titre: str, date_cible: Optional[datetime] = None, description: Optional[str] = None) -> str:
         """Crée une nouvelle tâche et retourne son ID."""
-        return await asyncio.to_thread(self._create_google_task_sync, titre, date_cible, description)
+        async with self._lock:
+            return await asyncio.to_thread(self._create_google_task_sync, titre, date_cible, description)
 
     def _create_google_task_sync(self, titre: str, date_cible: Optional[datetime], description: Optional[str]) -> str:
         service = self._get_tasks_service()
@@ -2249,7 +2304,8 @@ class GoogleCalendarTasksService:
 
     async def complete_google_task(self, task_id: str) -> bool:
         """Marque une tâche comme 'terminée' (cochée)."""
-        return await asyncio.to_thread(self._complete_google_task_sync, task_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._complete_google_task_sync, task_id)
 
     def _complete_google_task_sync(self, task_id: str) -> bool:
         service = self._get_tasks_service()
@@ -2268,7 +2324,8 @@ class GoogleCalendarTasksService:
 
     async def delete_google_task(self, task_id: str) -> bool:
         """Supprime définitivement une tâche."""
-        return await asyncio.to_thread(self._delete_google_task_sync, task_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._delete_google_task_sync, task_id)
 
     def _delete_google_task_sync(self, task_id: str) -> bool:
         service = self._get_tasks_service()
@@ -2282,7 +2339,8 @@ class GoogleCalendarTasksService:
 
     async def modify_google_task(self, task_id: str, new_title: Optional[str] = None, new_due: Optional[datetime] = None, new_notes: Optional[str] = None) -> str:
         """Met à jour une tâche existante (PATCH)."""
-        return await asyncio.to_thread(self._modify_google_task_sync, task_id, new_title, new_due, new_notes)
+        async with self._lock:
+            return await asyncio.to_thread(self._modify_google_task_sync, task_id, new_title, new_due, new_notes)
 
     def _modify_google_task_sync(self, task_id: str, new_title: Optional[str], new_due: Optional[datetime], new_notes: Optional[str]) -> str:
         service = self._get_tasks_service()
@@ -2409,7 +2467,8 @@ class GoogleDriveService:
         """
         Recherche un fichier ou un dossier par son nom exact dans le Drive.
         """
-        return await asyncio.to_thread(self._find_file_or_folder_sync, name, mime_type, parent_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._find_file_or_folder_sync, name, mime_type, parent_id)
 
     def _find_file_or_folder_sync(self, name: str, mime_type: Optional[str] = None, parent_id: Optional[str] = None) -> Optional[str]:
         if not self.service:
@@ -2440,7 +2499,8 @@ class GoogleDriveService:
         """
         Crée un nouveau dossier.
         """
-        return await asyncio.to_thread(self._create_folder_sync, folder_name, parent_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._create_folder_sync, folder_name, parent_id)
 
     def _create_folder_sync(self, folder_name: str, parent_id: Optional[str] = None) -> str:
         if not self.service:
@@ -2530,7 +2590,8 @@ class GoogleDriveService:
         """
         Recherche plein texte dans le Drive. Retourne l'ID, le nom, le type et le lien d'accès.
         """
-        return await asyncio.to_thread(self._search_files_by_content_sync, query_string, limit)
+        async with self._lock:
+            return await asyncio.to_thread(self._search_files_by_content_sync, query_string, limit)
 
     def _search_files_by_content_sync(self, query_string: str, limit: int) -> List[Dict[str, Any]]:
         if not self.service:
@@ -2604,7 +2665,7 @@ from typing import List, Optional
 from src.core.models import MailObject, TriDecision
 from src.core.exceptions import IMAPError
 from src.core.config import get_settings
-from src.utils import get_logger, extract_email_address, clean_html_content, estimate_token_count
+from src.utils import get_logger, extract_email_address, clean_html_content, estimate_token_count, truncate_text_for_llm, extract_text_from_attachment
 
 from email.message import EmailMessage
 import time
@@ -2631,12 +2692,15 @@ class IMAPService:
         self.port = port or settings.IMAP_PORT
         
         self.mail: Optional[imaplib.IMAP4_SSL] = None
+        self._lock = asyncio.Lock()
+
         logger.debug("Service IMAP initialisé avec la configuration centrale.")
 
 
     async def connect(self) -> None:
         """Point d'entrée asynchrone pour la connexion IMAP."""
-        await asyncio.to_thread(self._connect_sync)
+        async with self._lock:
+            await asyncio.to_thread(self._connect_sync)
 
     def _connect_sync(self) -> None:
         """Logique synchrone de connexion exécutée dans un thread séparé."""
@@ -2654,8 +2718,9 @@ class IMAPService:
 
     async def disconnect(self) -> None:
         """Point d'entrée asynchrone pour la déconnexion."""
-        await asyncio.to_thread(self._disconnect_sync)
-        
+        async with self._lock:
+            await asyncio.to_thread(self._disconnect_sync)
+
     def _disconnect_sync(self) -> None:
         """Ferme proprement la connexion IMAP."""
         if self.mail:
@@ -2667,15 +2732,40 @@ class IMAPService:
             finally:
                 self.mail = None
 
+    def _ensure_connected(self) -> None:
+        """
+        Vérifie si la connexion IMAP est toujours active. 
+        En cas de perte (Timeout, Pare-feu, Sophos), force une reconnexion transparente.
+        """
+        try:
+            if self.mail:
+                # La commande NOOP (No Operation) est le standard pour tester un "ping" IMAP
+                status, _ = self.mail.noop()
+                if status != 'OK':
+                    raise IMAPError("La commande NOOP a échoué, socket probablement corrompu.")
+            else:
+                self._connect_sync()
+                
+        except Exception as e:
+            logger.warning(f"Connexion IMAP perdue ou instable ({e}). Tentative de reconnexion automatique...")
+            # On force le nettoyage de l'ancien socket mort
+            try:
+                self._disconnect_sync()
+            except Exception:
+                self.mail = None
+                
+            # On relance une connexion fraîche
+            self._connect_sync()
+
 
     async def fetch_unread_emails(self, folder: str = "INBOX", limit: int = 50) -> List[MailObject]:
         """Point d'entrée asynchrone pour relever les e-mails non lus."""
-        return await asyncio.to_thread(self._fetch_unread_emails_sync, folder, limit)
+        async with self._lock:
+            return await asyncio.to_thread(self._fetch_unread_emails_sync, folder, limit)
 
     def _fetch_unread_emails_sync(self, folder: str, limit: int) -> List[MailObject]:
         """Logique métier d'extraction et de parsing des mails."""
-        if not self.mail:
-            raise IMAPError("Service IMAP non connecté.")
+        self._ensure_connected()
 
         logger.info(f"Recherche de nouveaux messages non traités dans le dossier '{folder}'...")
         try:
@@ -2691,7 +2781,7 @@ class IMAPService:
                 return []
 
             mail_ids = messages[0].split()
-            mail_ids = mail_ids[:limit]
+            mail_ids = mail_ids[-limit:]
             emails_list = []
             
             for mail_id in mail_ids: # On utilise BODY.PEEK[] pour télécharger le mail sans enlever le flag UNSEEN
@@ -2713,13 +2803,12 @@ class IMAPService:
 
     async def move_email(self, decision: TriDecision) -> bool:
         """Déplace un e-mail de manière asynchrone."""
-        return await asyncio.to_thread(self._move_email_sync, decision)
+        async with self._lock:
+            return await asyncio.to_thread(self._move_email_sync, decision)
 
     def _move_email_sync(self, decision: TriDecision) -> bool:
         """Exécute les commandes IMAP COPY et STORE pour déplacer l'e-mail."""
-        if not self.mail:
-            logger.error("Déplacement impossible : IMAP non connecté.")
-            return False
+        self._ensure_connected()
             
         try:
             uid_mail = decision.id_mail.encode('utf-8')
@@ -2747,12 +2836,13 @@ class IMAPService:
 
     async def mark_as_processed(self, mail_id: str) -> bool:
         """Ajoute un tag invisible IMAP pour indiquer que l'IA a traité cet e-mail."""
-        return await asyncio.to_thread(self._mark_as_processed_sync, mail_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._mark_as_processed_sync, mail_id)
 
     def _mark_as_processed_sync(self, mail_id: str) -> bool:
         """Logique IMAP d'ajout de mot-clé (Keyword) personnalisé."""
-        if not self.mail:
-            return False
+        self._ensure_connected()
+        
             
         try:
             uid_mail = mail_id.encode('utf-8')
@@ -2771,16 +2861,15 @@ class IMAPService:
         """
         Point d'entrée asynchrone pour sauvegarder un message dans le dossier des brouillons.
         """
-        return await asyncio.to_thread(self._save_draft_sync, destinataire, sujet, contenu_texte, dossier_brouillons)
+        async with self._lock:
+            return await asyncio.to_thread(self._save_draft_sync, destinataire, sujet, contenu_texte, dossier_brouillons)
 
     def _save_draft_sync(self, destinataire: str, sujet: str, contenu_texte: str, dossier_brouillons: str) -> bool:
         """
         Logique synchrone IMAP (commande APPEND) pour injecter un brouillon.
         """
 
-        if not self.mail:
-            logger.error("Création du brouillon impossible : IMAP non connecté.")
-            return False
+        self._ensure_connected()
             
         try:
             logger.debug(f"Construction de l'objet e-mail pour {destinataire}...")
@@ -2820,7 +2909,8 @@ class IMAPService:
         Point d'entrée asynchrone pour parcourir tous les dossiers IMAP et récupérer
         les e-mails strictement non lus par l'humain (flag UNSEEN).
         """
-        return await asyncio.to_thread(self._fetch_all_unseen_emails_sync, limit_per_folder)
+        async with self._lock:
+            return await asyncio.to_thread(self._fetch_all_unseen_emails_sync, limit_per_folder)
 
     def _fetch_all_unseen_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
         """
@@ -2833,8 +2923,7 @@ class IMAPService:
         import email.utils
         from datetime import datetime
         
-        if not self.mail:
-            raise IMAPError("Service IMAP non connecté.")
+        self._ensure_connected()
 
         logger.info("Récupération de la liste de tous les dossiers IMAP...")
         emails_list = []
@@ -2918,7 +3007,8 @@ class IMAPService:
                 # Extraction du contenu texte et des PJ
                 contenu_texte = ""
                 pieces_jointes = []
-                
+                contenu_pj_brut = "" # Variable pour stocker le texte brut des PJ
+
                 if msg.is_multipart():
                     for part in msg.walk():
                         content_type = part.get_content_type()
@@ -2928,8 +3018,13 @@ class IMAPService:
                             filename = part.get_filename()
                             if filename:
                                 pieces_jointes.append(filename)
+                                
+                                # -- NOUVEAU : Tentative d'extraction du texte de la PJ --
+                                texte_extrait = extract_text_from_attachment(part, filename)
+                                if texte_extrait.strip():
+                                    contenu_pj_brut += f"\n\n--- PIÈCE JOINTE : {filename} ---\n{texte_extrait}"
                         
-                        # --- Prise en charge et nettoyage du HTML ---
+                        # --- Prise en charge et nettoyage du HTML (Corps du mail) ---
                         elif content_type in ["text/plain", "text/html"] and "attachment" not in content_disposition:
                             try:
                                 raw_text = part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
@@ -2942,7 +3037,6 @@ class IMAPService:
                 else:
                     try:
                         raw_payload = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
-                        # --- Nettoyage si le message unique est du HTML ---
                         if msg.get_content_type() == "text/html":
                             contenu_texte = clean_html_content(raw_payload)
                         else:
@@ -2950,16 +3044,22 @@ class IMAPService:
                     except Exception:
                         contenu_texte = str(msg.get_payload())
 
-                # Nettoyage final du texte
+                # Nettoyage final du texte principal
                 contenu_final = contenu_texte.strip() or "(Contenu vide ou illisible)"
                 
-                # --- Estimation des tokens ---
+                # -- NOUVEAU : Troncature et fusion des pièces jointes --
+                if contenu_pj_brut:
+                    # On protège le LLM en forçant une limite stricte de tokens sur l'ensemble des PJ
+                    contenu_pj_tronque = truncate_text_for_llm(contenu_pj_brut, max_tokens=1000)
+                    contenu_final += contenu_pj_tronque
+
+                # --- Estimation des tokens sur le total (Corps + PJ tronquées) ---
                 nb_tokens = estimate_token_count(contenu_final)
 
                 # Gestion sécurisée du décodage de l'ID IMAP
                 id_str = mail_id.decode('utf-8') if isinstance(mail_id, bytes) else str(mail_id)
 
-                # Instanciation de l'objet métier avec le nombre de tokens intégré
+                # Instanciation de l'objet métier
                 return MailObject(
                     id_mail=id_str,
                     date_reception=date_reception,
@@ -2979,12 +3079,12 @@ class IMAPService:
         été traités par le Pipeline C de synthèse nocturne.
         N'applique AUCUN flag pour respecter le principe d'acquittement (ACK).
         """
-        return await asyncio.to_thread(self._fetch_unsynthesized_emails_sync, limit_per_folder)
+        async with self._lock:
+            return await asyncio.to_thread(self._fetch_unsynthesized_emails_sync, limit_per_folder)
 
     def _fetch_unsynthesized_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
         import re
-        if not self.mail:
-            raise IMAPError("Service IMAP non connecté.")
+        self._ensure_connected()
 
         logger.info("Récupération des e-mails non synthétisés (UNKEYWORD CopiloteSynthetise)...")
         emails_list = []
@@ -3046,12 +3146,11 @@ class IMAPService:
         Applique le flag 'CopiloteSynthetise' sur une liste d'e-mails pour qu'ils 
         ne soient plus traités lors des prochaines synthèses.
         """
-        return await asyncio.to_thread(self._mark_emails_as_synthesized_sync, emails)
+        async with self._lock:
+            return await asyncio.to_thread(self._mark_emails_as_synthesized_sync, emails)
 
     def _mark_emails_as_synthesized_sync(self, emails: List[MailObject]) -> bool:
-        if not self.mail:
-            logger.error("Marquage impossible : IMAP non connecté.")
-            return False
+        self._ensure_connected()
             
         if not emails:
             return True
@@ -4274,6 +4373,59 @@ def split_telegram_message(text: str, max_length: int = 4096) -> List[str]:
         
     return chunks
 
+import io
+
+# Imports conditionnels pour éviter un crash si les dépendances ne sont pas installées
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
+    import docx
+except ImportError:
+    docx = None
+
+def extract_text_from_attachment(part, filename: str) -> str:
+    """
+    Extrait le texte brut d'une pièce jointe (PDF, DOCX, TXT) de manière sécurisée.
+    Conçu pour être léger sur un Raspberry Pi.
+    """
+    if not filename:
+        return ""
+
+    ext = filename.split('.')[-1].lower()
+    if ext not in ['txt', 'pdf', 'docx', 'doc']:
+        return ""
+
+    try:
+        payload = part.get_payload(decode=True)
+        if not payload:
+            return ""
+
+        if ext == 'txt':
+            return payload.decode(part.get_content_charset() or 'utf-8', errors='replace')
+
+        elif ext == 'pdf' and PdfReader:
+            reader = PdfReader(io.BytesIO(payload))
+            # On limite la lecture aux 10 premières pages pour préserver le CPU du Raspberry
+            text_pages = [page.extract_text() for page in reader.pages[:10] if page.extract_text()]
+            return "\n".join(text_pages)
+
+        elif ext == 'docx' and docx:
+            doc = docx.Document(io.BytesIO(payload))
+            return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+
+        elif ext == 'doc':
+            return "[Format obsolète (.doc) non analysé. Demandez un format .docx ou .pdf]"
+            
+        else:
+            return f"[Impossible de lire le fichier {filename} : bibliothèques manquantes]"
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la lecture de la PJ '{filename}' : {e}")
+        return f"[Erreur technique lors de la lecture du fichier {filename}]"
+
 
 ============================================================
 --- FICHIER : src/utils/__init__.py ---
@@ -4289,7 +4441,8 @@ from .text_utils import (
     extract_email_address,
     estimate_token_count,
     truncate_text_for_llm,
-    split_telegram_message
+    split_telegram_message,
+    extract_text_from_attachment
 )
 
 
@@ -4668,6 +4821,7 @@ from src.agents import SynthAgent
 from src.core import ChatHistory, MailObject
 from src.utils import get_logger
 from src.utils import get_logger, truncate_text_for_llm
+from src.workflows.pipeline_b_telegram import PipelineBTelegram
 
 logger = get_logger(__name__)
 
@@ -4687,7 +4841,8 @@ class PipelineCSynthesis:
         telegram_service: TelegramBotService,
         imap_service: IMAPService,
         synth_agent: SynthAgent,
-        memoire_file_id: str
+        memoire_file_id: str,
+        pipeline_b: PipelineBTelegram = None,
     ) -> None:
         """
         Initialise le Pipeline C avec les services et l'agent de synthèse.
@@ -4704,6 +4859,8 @@ class PipelineCSynthesis:
         self.imap_service = imap_service
         self.synth_agent = synth_agent
         self.memoire_file_id = memoire_file_id
+        self.pipeline_b = pipeline_b
+        self.historique_en_cours_de_traitement = []
         
         self.history_file_path = Path("data/chat_history.json")
 
@@ -4761,26 +4918,25 @@ class PipelineCSynthesis:
         logger.debug("Collecte des informations de la journée...")
         consolidated_info = ""
 
-        # A. Collecte des notes Telegram
+        # A. Collecte de la conversation Telegram directement depuis la RAM du Pipeline B
         telegram_notes = []
-        if self.history_file_path.exists():
-            try:
-                content = self.history_file_path.read_text(encoding="utf-8")
-                chat_history = ChatHistory.model_validate_json(content)
-                
-                # Filtrage : On ne garde que les messages de l'utilisateur non synthétisés
-                telegram_notes = [
-                    turn for turn in chat_history.turns 
-                    if turn.role == "user" and not turn.est_synthetise
-                ]
-            except Exception as e:
-                logger.error(f"Erreur lors de la lecture de {self.history_file_path} : {e}")
+        if self.pipeline_b and self.pipeline_b.chat_history:
+            # Filtrage : On garde TOUS les messages (user ET model) non synthétisés
+            telegram_notes = [
+                turn for turn in self.pipeline_b.chat_history.turns 
+                if not turn.est_synthetise
+            ]
+            self.historique_en_cours_de_traitement = telegram_notes
 
         if telegram_notes:
-            consolidated_info += "--- NOTES TELEGRAM DE LA JOURNÉE (DICTÉES PAR LE PERDIR) ---\n"
+            consolidated_info += "--- ÉCHANGES TELEGRAM DE LA JOURNÉE (PERDIR & COPILOTE IA) ---\n"
             for note in telegram_notes:
                 date_str = note.timestamp.strftime('%H:%M')
-                consolidated_info += f"[{date_str}] : {note.message}\n"
+                
+                # On identifie clairement qui parle pour aider l'Agent de Synthèse
+                auteur = "Perdir" if note.role == "user" else "Copilote IA"
+                
+                consolidated_info += f"[{date_str}] {auteur} : {note.message}\n"
             consolidated_info += "\n"
 
         # B. Collecte des e-mails (Appel à la méthode résiliente)
@@ -4838,21 +4994,22 @@ class PipelineCSynthesis:
 
     async def _mark_history_as_synthesized(self) -> None:
         """
-        Passe le flag 'est_synthetise' à True pour tous les messages locaux.
+        Passe le flag 'est_synthetise' à True directement dans la mémoire du Pipeline B.
         """
-        logger.debug("Marquage de l'historique Telegram comme synthétisé...")
-        if not self.history_file_path.exists():
+        logger.debug("Marquage de l'historique Telegram comme synthétisé en RAM...")
+        if not self.pipeline_b:
             return
             
         try:
-            content = self.history_file_path.read_text(encoding="utf-8")
-            chat_history = ChatHistory.model_validate_json(content)
-            
-            for turn in chat_history.turns:
+            # On modifie les objets directement en mémoire vive
+            for turn in self.historique_en_cours_de_traitement:
                 turn.est_synthetise = True
                 
-            json_data = chat_history.model_dump_json(indent=2)
-            self.history_file_path.write_text(json_data, encoding="utf-8")
+            # On demande au Pipeline B de sauvegarder proprement sa mémoire sur le disque
+            self.pipeline_b._save_history()
+            # On vide le cache
+            self.historique_en_cours_de_traitement = []
+            
         except Exception as e:
             logger.error(f"Erreur lors du marquage de l'historique Telegram : {e}")
 

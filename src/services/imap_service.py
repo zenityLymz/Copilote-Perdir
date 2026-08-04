@@ -36,12 +36,15 @@ class IMAPService:
         self.port = port or settings.IMAP_PORT
         
         self.mail: Optional[imaplib.IMAP4_SSL] = None
+        self._lock = asyncio.Lock()
+
         logger.debug("Service IMAP initialisé avec la configuration centrale.")
 
 
     async def connect(self) -> None:
         """Point d'entrée asynchrone pour la connexion IMAP."""
-        await asyncio.to_thread(self._connect_sync)
+        async with self._lock:
+            await asyncio.to_thread(self._connect_sync)
 
     def _connect_sync(self) -> None:
         """Logique synchrone de connexion exécutée dans un thread séparé."""
@@ -59,8 +62,9 @@ class IMAPService:
 
     async def disconnect(self) -> None:
         """Point d'entrée asynchrone pour la déconnexion."""
-        await asyncio.to_thread(self._disconnect_sync)
-        
+        async with self._lock:
+            await asyncio.to_thread(self._disconnect_sync)
+
     def _disconnect_sync(self) -> None:
         """Ferme proprement la connexion IMAP."""
         if self.mail:
@@ -72,15 +76,40 @@ class IMAPService:
             finally:
                 self.mail = None
 
+    def _ensure_connected(self) -> None:
+        """
+        Vérifie si la connexion IMAP est toujours active. 
+        En cas de perte (Timeout, Pare-feu, Sophos), force une reconnexion transparente.
+        """
+        try:
+            if self.mail:
+                # La commande NOOP (No Operation) est le standard pour tester un "ping" IMAP
+                status, _ = self.mail.noop()
+                if status != 'OK':
+                    raise IMAPError("La commande NOOP a échoué, socket probablement corrompu.")
+            else:
+                self._connect_sync()
+                
+        except Exception as e:
+            logger.warning(f"Connexion IMAP perdue ou instable ({e}). Tentative de reconnexion automatique...")
+            # On force le nettoyage de l'ancien socket mort
+            try:
+                self._disconnect_sync()
+            except Exception:
+                self.mail = None
+                
+            # On relance une connexion fraîche
+            self._connect_sync()
+
 
     async def fetch_unread_emails(self, folder: str = "INBOX", limit: int = 50) -> List[MailObject]:
         """Point d'entrée asynchrone pour relever les e-mails non lus."""
-        return await asyncio.to_thread(self._fetch_unread_emails_sync, folder, limit)
+        async with self._lock:
+            return await asyncio.to_thread(self._fetch_unread_emails_sync, folder, limit)
 
     def _fetch_unread_emails_sync(self, folder: str, limit: int) -> List[MailObject]:
         """Logique métier d'extraction et de parsing des mails."""
-        if not self.mail:
-            raise IMAPError("Service IMAP non connecté.")
+        self._ensure_connected()
 
         logger.info(f"Recherche de nouveaux messages non traités dans le dossier '{folder}'...")
         try:
@@ -96,7 +125,7 @@ class IMAPService:
                 return []
 
             mail_ids = messages[0].split()
-            mail_ids = mail_ids[:limit]
+            mail_ids = mail_ids[-limit:]
             emails_list = []
             
             for mail_id in mail_ids: # On utilise BODY.PEEK[] pour télécharger le mail sans enlever le flag UNSEEN
@@ -118,13 +147,12 @@ class IMAPService:
 
     async def move_email(self, decision: TriDecision) -> bool:
         """Déplace un e-mail de manière asynchrone."""
-        return await asyncio.to_thread(self._move_email_sync, decision)
+        async with self._lock:
+            return await asyncio.to_thread(self._move_email_sync, decision)
 
     def _move_email_sync(self, decision: TriDecision) -> bool:
         """Exécute les commandes IMAP COPY et STORE pour déplacer l'e-mail."""
-        if not self.mail:
-            logger.error("Déplacement impossible : IMAP non connecté.")
-            return False
+        self._ensure_connected()
             
         try:
             uid_mail = decision.id_mail.encode('utf-8')
@@ -152,12 +180,13 @@ class IMAPService:
 
     async def mark_as_processed(self, mail_id: str) -> bool:
         """Ajoute un tag invisible IMAP pour indiquer que l'IA a traité cet e-mail."""
-        return await asyncio.to_thread(self._mark_as_processed_sync, mail_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._mark_as_processed_sync, mail_id)
 
     def _mark_as_processed_sync(self, mail_id: str) -> bool:
         """Logique IMAP d'ajout de mot-clé (Keyword) personnalisé."""
-        if not self.mail:
-            return False
+        self._ensure_connected()
+        
             
         try:
             uid_mail = mail_id.encode('utf-8')
@@ -176,16 +205,15 @@ class IMAPService:
         """
         Point d'entrée asynchrone pour sauvegarder un message dans le dossier des brouillons.
         """
-        return await asyncio.to_thread(self._save_draft_sync, destinataire, sujet, contenu_texte, dossier_brouillons)
+        async with self._lock:
+            return await asyncio.to_thread(self._save_draft_sync, destinataire, sujet, contenu_texte, dossier_brouillons)
 
     def _save_draft_sync(self, destinataire: str, sujet: str, contenu_texte: str, dossier_brouillons: str) -> bool:
         """
         Logique synchrone IMAP (commande APPEND) pour injecter un brouillon.
         """
 
-        if not self.mail:
-            logger.error("Création du brouillon impossible : IMAP non connecté.")
-            return False
+        self._ensure_connected()
             
         try:
             logger.debug(f"Construction de l'objet e-mail pour {destinataire}...")
@@ -225,7 +253,8 @@ class IMAPService:
         Point d'entrée asynchrone pour parcourir tous les dossiers IMAP et récupérer
         les e-mails strictement non lus par l'humain (flag UNSEEN).
         """
-        return await asyncio.to_thread(self._fetch_all_unseen_emails_sync, limit_per_folder)
+        async with self._lock:
+            return await asyncio.to_thread(self._fetch_all_unseen_emails_sync, limit_per_folder)
 
     def _fetch_all_unseen_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
         """
@@ -238,8 +267,7 @@ class IMAPService:
         import email.utils
         from datetime import datetime
         
-        if not self.mail:
-            raise IMAPError("Service IMAP non connecté.")
+        self._ensure_connected()
 
         logger.info("Récupération de la liste de tous les dossiers IMAP...")
         emails_list = []
@@ -395,12 +423,12 @@ class IMAPService:
         été traités par le Pipeline C de synthèse nocturne.
         N'applique AUCUN flag pour respecter le principe d'acquittement (ACK).
         """
-        return await asyncio.to_thread(self._fetch_unsynthesized_emails_sync, limit_per_folder)
+        async with self._lock:
+            return await asyncio.to_thread(self._fetch_unsynthesized_emails_sync, limit_per_folder)
 
     def _fetch_unsynthesized_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
         import re
-        if not self.mail:
-            raise IMAPError("Service IMAP non connecté.")
+        self._ensure_connected()
 
         logger.info("Récupération des e-mails non synthétisés (UNKEYWORD CopiloteSynthetise)...")
         emails_list = []
@@ -462,12 +490,11 @@ class IMAPService:
         Applique le flag 'CopiloteSynthetise' sur une liste d'e-mails pour qu'ils 
         ne soient plus traités lors des prochaines synthèses.
         """
-        return await asyncio.to_thread(self._mark_emails_as_synthesized_sync, emails)
+        async with self._lock:
+            return await asyncio.to_thread(self._mark_emails_as_synthesized_sync, emails)
 
     def _mark_emails_as_synthesized_sync(self, emails: List[MailObject]) -> bool:
-        if not self.mail:
-            logger.error("Marquage impossible : IMAP non connecté.")
-            return False
+        self._ensure_connected()
             
         if not emails:
             return True

@@ -46,6 +46,7 @@ class ChromaDBService:
         """
         self.persist_directory = persist_directory
         self.logger = get_logger(__name__)
+        self._lock = asyncio.Lock()
         
         try:
             # Récupération de la configuration
@@ -86,7 +87,8 @@ class ChromaDBService:
         if not emails:
             return
             
-        await asyncio.to_thread(self._index_emails_sync, emails)
+        async with self._lock:
+            await asyncio.to_thread(self._index_emails_sync, emails)
 
     def _index_emails_sync(self, emails: List[MailObject]) -> None:
         """Logique synchrone d'indexation déléguée dans un thread."""
@@ -134,7 +136,8 @@ class ChromaDBService:
         Returns:
             List[Dict]: Les documents trouvés, incluant le texte d'origine, les distances et les métadonnées.
         """
-        return await asyncio.to_thread(self._search_semantic_sync, query, n_results, filter_metadata)
+        async with self._lock:
+            return await asyncio.to_thread(self._search_semantic_sync, query, n_results, filter_metadata)
 
     def _search_semantic_sync(self, query: str, n_results: int, filter_metadata: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Logique synchrone de requête (RAG)."""
@@ -176,7 +179,8 @@ class ChromaDBService:
         Returns:
             bool: True si la suppression a réussi, False sinon.
         """
-        return await asyncio.to_thread(self._delete_email_sync, mail_id)
+        async with self._lock:
+            return await asyncio.to_thread(self._delete_email_sync, mail_id)
 
     def _delete_email_sync(self, mail_id: str) -> bool:
         """Logique synchrone de suppression dans la collection."""

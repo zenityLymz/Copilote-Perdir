@@ -48,7 +48,7 @@ Voici la structure du fichier avec une brève description de chaque section du d
 
 # 👥 2. R.H. ET CARTOGRAPHIE DES ACTEURS
 ## 2.1 Équipe de Direction et Administration : Structure de l'équipe de direction et des services administratifs, répartition des dossiers Direction/Adjoint/Gestionnaire, secrétariat.
-## 2.2 Équipe Pédagogique (Enseignants) : Professeurs principaux, coordonnateurs, absences longues/remplacements (TZR/Contractuels), accompagnement des profs en difficulté.
+## 2.2 Équipe Pédagogique (Enseignants) : Dynamiques par discipline, professeurs principaux, coordonnateurs, gestion globale des remplacements (TZR/Contractuels), besoins de formation. (Pas de détails médicaux ou disciplinaires nominatifs).
 ## 2.3 Pôle Vie Scolaire et Inclusion (CPE, AED, AESH) : Équipe CPE, management et contrats AED, affectations/mouvements des AESH.
 ## 2.4 Agents Techniques et Territoriaux (Collectivité) : Personnels de cuisine, entretien, accueil, demandes de remplacement à la Mairie/Département/Région.
 ## 2.5 Climat Social, Syndicats et Médecine du Travail : Représentants syndicaux locaux, registres RSST, préavis de grève, santé au travail.
@@ -61,11 +61,11 @@ Voici la structure du fichier avec une brève description de chaque section du d
 ## 3.5 Infrastructures Numériques et Équipements : Fibre, réseau, serveurs, parc informatique, photocopieurs.
 
 # 🛡️ 4. CLIMAT SCOLAIRE ET VIE DE L'ÉLÈVE
-## 4.1 Discipline, Climat Scolaire et Harcèlement (pHARe) : Conseils de discipline, exclusions, équipe ressource pHARe, règlements de comptes.
+## 4.1 Discipline, Climat Scolaire et Harcèlement (pHARe) : Tendances globales du climat scolaire, bilans statistiques des conseils de discipline/exclusions, fonctionnement de l'équipe ressource pHARe, actions de prévention. AUCUN CAS NOMINATIF INDIVIDUEL.
 ## 4.2 Santé, Action Sociale et Organisation Médico-scolaire : Organisation générale du Pôle Médico-Social (permanences infirmière/AS/PsyEN), protocoles sanitaires d'établissement, aménagements structurels d'accessibilité (handicap matériel), organisation des CESCE et instances éducatives. AUCUNE DONNÉE NOMINATIVE D'ÉLÈVE OU PAI/IP INDIVIDUEL ICI.
 ## 4.3 Engagement Élève (CVC/CVL, Éco-délégués, FSE) : Projets CVC/CVL, actions des éco-délégués, activités du FSE/MDL et clubs.
 ## 4.4 Les Parcours Éducatifs et l'Orientation : Suivi stratégique des 4 parcours (Parcours Avenir, PEAC, Parcours Citoyen, Parcours Éducatif de Santé), procédures Affelnet/Parcoursup, orientation et liaison 3e/2de.
-## 4.5 Relations avec les Familles et Représentants des Parents : Associations de parents (FCPE/PEEP), réunions, tensions avec des familles spécifiques.
+## 4.5 Relations avec les Familles et Représentants des Parents : Dynamique avec les associations (FCPE/PEEP), réunions d'information, analyse globale des points de tension récurrents avec les parents.
 
 # ☕ 5. USAGES, HISTORIQUE ET CULTURE LOCALE
 ## 5.1 Histoire de l'Établissement et Mémoire du Territoire : Crises passées, particularités du bassin, historique des anciens personnels.

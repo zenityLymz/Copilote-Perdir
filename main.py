@@ -186,7 +186,8 @@ async def main() -> None:
             telegram_service=telegram_service,
             imap_service=imap_service,
             synth_agent=synth_agent,
-            memoire_file_id=settings.MEMOIRE_FILE_ID
+            memoire_file_id=settings.MEMOIRE_FILE_ID,
+            pipeline_b=pipeline_b
         )
 
         # 5. Démarrage des tâches asynchrones parallèles
@@ -195,7 +196,7 @@ async def main() -> None:
         # Le rassemblement des tâches dans asyncio.gather assure le fonctionnement en concurrence 100% Async
         await asyncio.gather(
             telegram_service.start_polling(),                       # Écoute Telegram en Long Polling
-            run_pipeline_a_loop(pipeline_a, interval_seconds=300),  # Relève des mails toutes les 5 minutes
+            run_pipeline_a_loop(pipeline_a, interval_seconds=180),  # Relève des mails toutes les 3 minutes
             run_pipeline_c_loop(pipeline_c, target_hour=18)         # Synthèse programmée à partir de 18h
         )
 

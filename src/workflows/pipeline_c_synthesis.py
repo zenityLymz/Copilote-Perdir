@@ -8,6 +8,7 @@ from src.agents import SynthAgent
 from src.core import ChatHistory, MailObject
 from src.utils import get_logger
 from src.utils import get_logger, truncate_text_for_llm
+from src.workflows.pipeline_b_telegram import PipelineBTelegram
 
 logger = get_logger(__name__)
 
@@ -27,7 +28,8 @@ class PipelineCSynthesis:
         telegram_service: TelegramBotService,
         imap_service: IMAPService,
         synth_agent: SynthAgent,
-        memoire_file_id: str
+        memoire_file_id: str,
+        pipeline_b: PipelineBTelegram = None,
     ) -> None:
         """
         Initialise le Pipeline C avec les services et l'agent de synthèse.
@@ -44,6 +46,8 @@ class PipelineCSynthesis:
         self.imap_service = imap_service
         self.synth_agent = synth_agent
         self.memoire_file_id = memoire_file_id
+        self.pipeline_b = pipeline_b
+        self.historique_en_cours_de_traitement = []
         
         self.history_file_path = Path("data/chat_history.json")
 
@@ -101,26 +105,25 @@ class PipelineCSynthesis:
         logger.debug("Collecte des informations de la journée...")
         consolidated_info = ""
 
-        # A. Collecte des notes Telegram
+        # A. Collecte de la conversation Telegram directement depuis la RAM du Pipeline B
         telegram_notes = []
-        if self.history_file_path.exists():
-            try:
-                content = self.history_file_path.read_text(encoding="utf-8")
-                chat_history = ChatHistory.model_validate_json(content)
-                
-                # Filtrage : On ne garde que les messages de l'utilisateur non synthétisés
-                telegram_notes = [
-                    turn for turn in chat_history.turns 
-                    if turn.role == "user" and not turn.est_synthetise
-                ]
-            except Exception as e:
-                logger.error(f"Erreur lors de la lecture de {self.history_file_path} : {e}")
+        if self.pipeline_b and self.pipeline_b.chat_history:
+            # Filtrage : On garde TOUS les messages (user ET model) non synthétisés
+            telegram_notes = [
+                turn for turn in self.pipeline_b.chat_history.turns 
+                if not turn.est_synthetise
+            ]
+            self.historique_en_cours_de_traitement = telegram_notes
 
         if telegram_notes:
-            consolidated_info += "--- NOTES TELEGRAM DE LA JOURNÉE (DICTÉES PAR LE PERDIR) ---\n"
+            consolidated_info += "--- ÉCHANGES TELEGRAM DE LA JOURNÉE (PERDIR & COPILOTE IA) ---\n"
             for note in telegram_notes:
                 date_str = note.timestamp.strftime('%H:%M')
-                consolidated_info += f"[{date_str}] : {note.message}\n"
+                
+                # On identifie clairement qui parle pour aider l'Agent de Synthèse
+                auteur = "Perdir" if note.role == "user" else "Copilote IA"
+                
+                consolidated_info += f"[{date_str}] {auteur} : {note.message}\n"
             consolidated_info += "\n"
 
         # B. Collecte des e-mails (Appel à la méthode résiliente)
@@ -178,20 +181,21 @@ class PipelineCSynthesis:
 
     async def _mark_history_as_synthesized(self) -> None:
         """
-        Passe le flag 'est_synthetise' à True pour tous les messages locaux.
+        Passe le flag 'est_synthetise' à True directement dans la mémoire du Pipeline B.
         """
-        logger.debug("Marquage de l'historique Telegram comme synthétisé...")
-        if not self.history_file_path.exists():
+        logger.debug("Marquage de l'historique Telegram comme synthétisé en RAM...")
+        if not self.pipeline_b:
             return
             
         try:
-            content = self.history_file_path.read_text(encoding="utf-8")
-            chat_history = ChatHistory.model_validate_json(content)
-            
-            for turn in chat_history.turns:
+            # On modifie les objets directement en mémoire vive
+            for turn in self.historique_en_cours_de_traitement:
                 turn.est_synthetise = True
                 
-            json_data = chat_history.model_dump_json(indent=2)
-            self.history_file_path.write_text(json_data, encoding="utf-8")
+            # On demande au Pipeline B de sauvegarder proprement sa mémoire sur le disque
+            self.pipeline_b._save_history()
+            # On vide le cache
+            self.historique_en_cours_de_traitement = []
+            
         except Exception as e:
             logger.error(f"Erreur lors du marquage de l'historique Telegram : {e}")
