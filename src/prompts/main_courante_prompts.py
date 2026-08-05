@@ -42,50 +42,6 @@ RÈGLES DE RÉDACTION STRICTES :
 
 """
 
-def build_main_courante_mail_prompt(mail: MailObject, existing_tags: Optional[List[str]] = None) -> str:
-    """
-    Construit le prompt utilisateur pour générer une entrée de main courante 
-    à partir d'un e-mail (Pipeline A).
-    
-    Args:
-        mail (MailObject): L'e-mail source contenant les faits à consigner.
-        existing_tags (Optional[List[str]]): Les tags déjà présents dans le fichier 
-                                             actuel, à réutiliser prioritairement pour 
-                                             éviter les doublons (ex: éviter d'avoir 
-                                             #Bagarre et #Altercation).
-        
-    Returns:
-        str: Le prompt formaté contenant les instructions, le contexte des tags 
-             et le contenu de l'e-mail.
-    """
-    tags_instruction = ""
-    if existing_tags:
-        tags_list = ", ".join(existing_tags)
-        tags_instruction = (
-            f"Pour assurer la cohérence de l'indexation du registre, voici la liste des balises (tags) "
-            f"déjà utilisées dans le document. RÉUTILISE-LES EN PRIORITÉ s'ils sont pertinents "
-            f"pour décrire ce nouvel incident : {tags_list}\n"
-        )
-
-    # Formatage de la date de réception du mail
-    date_str = mail.date_reception.strftime("%d/%m/%Y à %H:%M")
-    
-    prompt = f"""Voici un e-mail reçu par le Chef d'Établissement relatant un événement qui doit être consigné dans la Main Courante.
-
-{tags_instruction}
---- DÉBUT DE L'E-MAIL SOUCHE ---
-Date de réception : {date_str}
-Expéditeur : {mail.expediteur}
-Sujet : {mail.sujet}
-
-Contenu brut du message :
-{mail.contenu_texte}
---- FIN DE L'E-MAIL SOUCHE ---
-
-Tu dois le transformer en une entrée formelle pour la Main Courante en suivant scrupuleusement les instructions système.
-"""
-    return prompt
-
 def build_main_courante_text_prompt(raw_text: str, existing_tags: Optional[List[str]] = None) -> str:
     """
     Construit le prompt utilisateur pour générer une entrée de main courante 

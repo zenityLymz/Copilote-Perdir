@@ -115,6 +115,12 @@ class TelegramBotService:
         """
         # Fermeture de sécurité (Closure) identique à register_command
         async def secure_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+            # Si update.message est None (ce qui arrive lors d'une édition), on ignore silencieusement.
+            # Cela évite que l'IA ne traite deux fois la même commande.
+            if not update.message:
+                return
+
             # Vérification de l'identité de l'expéditeur
             # Le bot accepte si moi 
             if str(update.effective_user.id) != self._allowed_user_id :

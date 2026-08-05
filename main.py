@@ -17,7 +17,10 @@ from src.core.dependencies import (
     get_imap_service,
     set_chroma_service,
     set_drive_service,
-    set_telegram_service
+    set_telegram_service,
+    set_token_tracker_service,
+    get_token_tracker_service,
+    set_gemini_router_service
 )
 from src.utils.logger import setup_logger, get_logger
 
@@ -25,7 +28,9 @@ from src.services import (
     IMAPService,
     ChromaDBService,
     GoogleDriveService,
-    TelegramBotService
+    TelegramBotService,
+    TokenTrackerService,
+    GeminiRouterService
 )
 from src.agents import (
     TriageAgent,
@@ -38,8 +43,11 @@ from src.workflows import (
     PipelineCSynthesis
 )
 
+from telegram import Update
+from telegram.ext import ContextTypes
+
 # Configuration initiale du logging avec rotation de fichier (max 5 Mo) pour le Raspberry Pi
-LOG_FILE = Path("data/app.log")
+LOG_FILE = Path("data/logs/copilote.log")
 setup_logger(log_file_path=LOG_FILE, log_level=logging.INFO)
 logger = get_logger("MainApp")
 
@@ -119,6 +127,52 @@ async def run_pipeline_c_loop(pipeline_c: PipelineCSynthesis, target_hour: int =
             # En cas d'erreur de l'API Gemini, on attend 5 minutes avant la prochaine tentative
             await asyncio.sleep(300)
 
+async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Commande Telegram /finance pour afficher la consommation du mois en cours."""
+    logger.info("Commande /finance demandée par le Perdir.")
+    try:
+        tracker = get_token_tracker_service()
+        now = datetime.now()
+        # On remonte au 1er jour du mois actuel à 00:00:00
+        premier_du_mois = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
+        stats_mois = await tracker.get_stats(start_date=premier_du_mois)
+        
+        if not stats_mois:
+            await update.message.reply_text("📊 <b>BILAN FINANCIER</b>\n\nAucune consommation enregistrée ce mois-ci.", parse_mode="HTML")
+            return
+            
+        reponse = f"📊 <b>BILAN FINANCIER ({now.strftime('%B %Y')})</b>\n\n"
+        total_cost = 0.0
+        
+        for modele, data in stats_mois.items():
+            in_t, out_t = data['input'], data['output']
+
+            from src.core.config import get_settings
+            settings = get_settings()
+            
+            if "pro" in modele.lower():
+                cost = (in_t * settings.PRICE_PRO_INPUT / 1000000) + (out_t * settings.PRICE_PRO_OUTPUT / 1000000)
+            else:
+                cost = (in_t * settings.PRICE_FLASH_INPUT / 1000000) + (out_t * settings.PRICE_FLASH_OUTPUT / 1000000)
+                
+            total_cost += cost
+            
+            # Affichage formaté
+            reponse += f"🔸 <b>{modele.upper()}</b>\n"
+            reponse += f"   - Entrée : {in_t:,}\n".replace(',', ' ')
+            reponse += f"   - Sortie : {out_t:,}\n".replace(',', ' ')
+            
+        reponse += f"\n💰 <b>Coût total estimé : ~{total_cost:.3f} $</b>"
+        budget_restant = 10.0 - total_cost
+        reponse += f"\n🏦 <b>Budget Google restant : ~{budget_restant:.3f} $</b>"
+        
+        await update.message.reply_text(reponse, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"Erreur dans la commande /finance : {e}", exc_info=True)
+        await update.message.reply_text("⚠️ Erreur technique lors de la récupération des données financières.")
+
 async def main() -> None:
     """
     Fonction principale asynchrone orchestrant l'initialisation et le lancement des pipelines.
@@ -152,13 +206,21 @@ async def main() -> None:
         telegram_service = TelegramBotService(token=settings.TELEGRAM_BOT_TOKEN, allowed_user_id=settings.TELEGRAM_ALLOWED_USER_ID)
         set_telegram_service(telegram_service)
 
+        # - Service Token Tracker (Base de données SQLite locale)
+        token_tracker = TokenTrackerService()
+        set_token_tracker_service(token_tracker)
+
+        # - Service Gemini Router (Gestionnaire de requêtes vers les modèles Gemini)
+        gemini_router = GeminiRouterService()
+        set_gemini_router_service(gemini_router)
+
         logger.info("Tous les services sont connectés et enregistrés.")
 
         # 3. Initialisation des Agents IA (Modèles Gemini)
         logger.info("Initialisation des cerveaux IA...")
-        triage_agent = TriageAgent(api_key=settings.GEMINI_API_KEY, model_name=settings.GEMINI_FLASH_MODEL)
-        orchestrator_agent = OrchestratorAgent(api_key=settings.GEMINI_API_KEY, model_name=settings.GEMINI_FLASH_MODEL)
-        synth_agent = SynthAgent(api_key=settings.GEMINI_API_KEY, model_name=settings.GEMINI_FLASH_MODEL)
+        triage_agent = TriageAgent()
+        orchestrator_agent = OrchestratorAgent()
+        synth_agent = SynthAgent()
 
         # 4. Instanciation des Pipelines
         logger.info("Câblage des Pipelines d'exécution...")
@@ -176,7 +238,10 @@ async def main() -> None:
             telegram_service=telegram_service,
             orchestrator_agent=orchestrator_agent
         )
-        
+
+        # Enregistrement de la commande /finance pour le Perdir
+        telegram_service.register_command("finance", finance_command)
+
         # Raccordement du gestionnaire de messages naturels Telegram vers le Pipeline B
         telegram_service.register_message_handler(pipeline_b.process_telegram_message)
 

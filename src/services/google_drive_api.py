@@ -50,7 +50,7 @@ class GoogleDriveService:
         await asyncio.to_thread(self._authenticate_sync)
 
     def _authenticate_sync(self) -> None:
-        """Logique synchrone d'authentification Google."""
+        """Logique synchrone d'authentification Google avec protection Headless."""
         creds = None
         logger.debug("Vérification des tokens Google Drive...")
 
@@ -69,9 +69,20 @@ class GoogleDriveService:
                     creds.refresh(Request())
                 except Exception as e:
                     logger.error(f"Échec du rafraîchissement du token : {e}")
-                    raise GoogleAPIError("Impossible de rafraîchir le token Google Drive.")
+                    raise GoogleAPIError("Le token a expiré de manière irrévocable (ou a été révoqué).")
             else:
-                logger.info("Lancement du flux d'authentification OAuth local...")
+                # --- NOUVEAU : Protection Anti-Figeage (Headless) ---
+                # Si on est sur Linux (posix) et qu'il n'y a pas de variable DISPLAY (pas d'écran)
+                if os.name == 'posix' and 'DISPLAY' not in os.environ:
+                    logger.critical(
+                        "🔒 ENVIRONNEMENT SANS ÉCRAN DÉTECTÉ (Headless).\n"
+                        "Le programme refuse de lancer le navigateur web pour éviter de se figer.\n"
+                        "💡 SOLUTION : Lancez l'application sur votre PC, connectez-vous à Google, "
+                        "puis transférez le fichier 'token.json' généré sur ce Raspberry Pi."
+                    )
+                    raise GoogleAPIError("Authentification initiale impossible sur un serveur sans interface graphique.")
+                
+                logger.info("Lancement du flux d'authentification OAuth local (Navigateur requis)...")
                 try:
                     flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, self.scopes)
                     creds = flow.run_local_server(port=0)

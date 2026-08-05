@@ -13,3 +13,5 @@ from .telegram_bot import TelegramBotService
 from .chroma_service import ChromaDBService
 from .google_drive_api import GoogleDriveService
 from .google_calendar_tasks import GoogleCalendarTasksService
+from .token_tracker import TokenTrackerService
+from .gemini_router import GeminiRouterService

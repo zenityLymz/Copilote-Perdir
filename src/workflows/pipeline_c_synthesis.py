@@ -1,9 +1,11 @@
 import json
+import difflib
 from pathlib import Path
 from typing import Optional, List, Tuple
 from datetime import datetime
 
 from src.services import GoogleDriveService, TelegramBotService, IMAPService
+from src.core.dependencies import get_token_tracker_service
 from src.agents import SynthAgent
 from src.core import ChatHistory, MailObject
 from src.utils import get_logger
@@ -81,6 +83,39 @@ class PipelineCSynthesis:
                 
                 # Formatage Telegram (HTML)
                 notification = f"🌙 <b>RAPPORT DE SYNTHÈSE DU SOIR</b>\n\n{summary}"
+
+                # Ajout du rapport financier quotidien
+                try:
+                    tracker = get_token_tracker_service()
+                    # On fixe la date de début à aujourd'hui à 00:00:00
+                    aujourdhui = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                    stats_jour = await tracker.get_stats(start_date=aujourdhui)
+                    
+                    if stats_jour:
+                        notification += "\n\n📊 <b>CONSOMMATION API (Aujourd'hui)</b>\n"
+                        total_cost = 0.0
+                        
+                        for modele, data in stats_jour.items():
+                            in_t, out_t = data['input'], data['output']
+                            
+                            from src.core.config import get_settings
+                            settings = get_settings()
+                            
+                            if "pro" in modele.lower():
+                                cost = (in_t * settings.PRICE_PRO_INPUT / 1000000) + (out_t * settings.PRICE_PRO_OUTPUT / 1000000)
+                            else:
+                                cost = (in_t * settings.PRICE_FLASH_INPUT / 1000000) + (out_t * settings.PRICE_FLASH_OUTPUT / 1000000)
+                                
+                            total_cost += cost
+                            # Formatage des nombres avec des espaces pour les milliers
+                            tokens_str = f"{data['total']:,}".replace(',', ' ')
+                            notification += f"- <i>{modele}</i> : {tokens_str} tokens\n"
+                            
+                        notification += f"<b>Coût estimé :</b> ~{total_cost:.4f} $\n"
+                except Exception as e:
+                    logger.error(f"Erreur lors de la génération du rapport financier : {e}")
+
+
                 await self.telegram_service.send_notification(notification)
                 logger.info("Cycle de synthèse nocturne terminé et acquitté avec succès.")
             else:
@@ -128,7 +163,7 @@ class PipelineCSynthesis:
 
         # B. Collecte des e-mails (Appel à la méthode résiliente)
         try:
-            emails_to_process = await self.imap_service.fetch_unsynthesized_emails()
+            emails_to_process = await self.imap_service.fetch_unsynthesized_emails(limit_per_folder=250)
         except Exception as e:
             logger.error(f"Impossible de récupérer les e-mails pour la synthèse : {e}")
             emails_to_process = []
@@ -161,11 +196,50 @@ class PipelineCSynthesis:
             logger.error(f"Impossible de lire le fichier mémoire établissement actuel : {e}")
             return None
 
+        # --- SAUVEGARDE DE SÉCURITÉ LOCALE (BACKUP) ---
+        try:
+            backup_dir = Path("data/backups")
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            nom_backup = f"memoire_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+            backup_file = backup_dir / nom_backup
+            backup_file.write_text(current_markdown, encoding="utf-8")
+            logger.debug(f"Sauvegarde locale de la mémoire effectuée : {backup_file}")
+        except Exception as e:
+            logger.warning(f"Échec de la création du backup local : {e}")
+            nom_backup = "Erreur de backup"
+
         # 2. Rewrite
         new_markdown = await self.synth_agent.rewrite_memoire_etablissement_content(current_markdown, daily_info)
         
         if not new_markdown:
              return None
+
+
+        # --- Contrôle d'intégrité (Sanity Check) Non-bloquant ---
+        alertes = []
+        
+        # Vérification 1 : Amputation massive du texte
+        if len(new_markdown) < (len(current_markdown) * 0.70):
+            alertes.append(f"- Perte de volume suspecte (Ancien: {len(current_markdown)} chars, Nouveau: {len(new_markdown)} chars).")
+            
+        # Vérification 2 : Calcul du taux de similarité
+        similarity_ratio = difflib.SequenceMatcher(None, current_markdown, new_markdown).ratio()
+        if similarity_ratio < 0.60:
+            alertes.append(f"- Taux de similarité très faible ({similarity_ratio:.2f}). Réécriture potentiellement excessive.")
+
+        # Si une anomalie est détectée, on envoie une notification immédiate
+        if alertes:
+            lignes_alerte = "\n".join(alertes)
+            msg_alerte = (
+                "⚠️ <b>ALERTE INTÉGRITÉ - MÉMOIRE DE L'ÉTABLISSEMENT</b> ⚠️\n\n"
+                "La mise à jour de ce soir présente des modifications suspectes :\n"
+                f"{lignes_alerte}\n\n"
+                "Le fichier a tout de même été mis à jour sur votre Drive, mais la version d'hier "
+                f"a été sauvegardée sur le Raspberry Pi sous le nom : <i>{nom_backup}</i>.\n"
+                "Je vous invite à vérifier le document."
+            )
+            await self.telegram_service.send_notification(msg_alerte)
+            logger.warning("Alerte intégrité envoyée sur Telegram, mais l'écrasement se poursuit.")
              
         # Génération du résumé des modifications
         summary = await self.synth_agent.generate_update_summary(current_markdown, new_markdown)
@@ -188,13 +262,16 @@ class PipelineCSynthesis:
             return
             
         try:
-            # On modifie les objets directement en mémoire vive
-            for turn in self.historique_en_cours_de_traitement:
-                turn.est_synthetise = True
+            # On utilise le verrou du Pipeline B pour éviter la collision
+            async with self.pipeline_b._memory_lock:
+                # On modifie les objets directement en mémoire vive
+                for turn in self.historique_en_cours_de_traitement:
+                    turn.est_synthetise = True
+                    
+                # On demande au Pipeline B de sauvegarder proprement sa mémoire sur le disque
+                self.pipeline_b._save_history()
                 
-            # On demande au Pipeline B de sauvegarder proprement sa mémoire sur le disque
-            self.pipeline_b._save_history()
-            # On vide le cache
+            # On vide le cache (en dehors du verrou, ce n'est plus risqué)
             self.historique_en_cours_de_traitement = []
             
         except Exception as e:

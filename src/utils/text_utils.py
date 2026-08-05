@@ -240,6 +240,13 @@ def extract_text_from_attachment(part, filename: str) -> str:
         if not payload:
             return ""
 
+        # --- Sécurisation du type binaire ---
+        # Si l'e-mail est mal formé et renvoie une chaîne au lieu d'octets,
+        # on la force en binaire pour ne pas faire crasher io.BytesIO.
+        if isinstance(payload, str):
+            charset = part.get_content_charset() or 'utf-8'
+            payload = payload.encode(charset, errors='replace')
+
         if ext == 'txt':
             return payload.decode(part.get_content_charset() or 'utf-8', errors='replace')
 

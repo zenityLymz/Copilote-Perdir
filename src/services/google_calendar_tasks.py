@@ -51,8 +51,8 @@ class GoogleCalendarTasksService:
         end_date = date_fin if date_fin else date_cible
         end_of_day = end_date.replace(hour=23, minute=59, second=59, microsecond=0)
         
-        time_min = self.timezone.localize(start_of_day).isoformat()
-        time_max = self.timezone.localize(end_of_day).isoformat()
+        time_min = self._ensure_timezone(start_of_day).isoformat()
+        time_max = self._ensure_timezone(end_of_day).isoformat()
 
         try:
             events_result = service.events().list(
@@ -76,7 +76,7 @@ class GoogleCalendarTasksService:
     def _create_calendar_event_sync(self, request: AgendaTaskRequest, duree_minutes: int, lieu: Optional[str]) -> Dict[str, str]:
         service = self._get_calendar_service()
         
-        start_dt = self.timezone.localize(request.date_cible)
+        start_dt = self._ensure_timezone(request.date_cible)
         end_dt = start_dt + timedelta(minutes=duree_minutes)
         
         event_body = {
@@ -136,7 +136,7 @@ class GoogleCalendarTasksService:
                 event['description'] = description
                 
             if new_date is not None:
-                start_dt = self.timezone.localize(new_date)
+                start_dt = self._ensure_timezone(new_date)
                 if not duree_minutes:
                     # On recalcule l'ancienne durée pour la conserver si non modifiée
                     old_start = datetime.fromisoformat(event['start'].get('dateTime'))
@@ -274,3 +274,16 @@ class GoogleCalendarTasksService:
         except Exception as e:
             logger.error(f"Erreur lors de la modification de la tâche {task_id}: {e}")
             raise GoogleAPIError(f"Modification de la tâche échouée : {e}")
+
+
+    def _ensure_timezone(self, dt: datetime) -> datetime:
+        """
+        Assure que l'objet datetime est correctement localisé dans le fuseau configuré,
+        qu'il provienne d'une chaîne ISO naïve ou déjà "aware".
+        """
+        if dt.tzinfo is None:
+            # S'il est naïf, on lui impose notre fuseau
+            return self.timezone.localize(dt)
+        else:
+            # S'il a déjà un fuseau (ex: +02:00), on le convertit proprement dans le nôtre
+            return dt.astimezone(self.timezone)

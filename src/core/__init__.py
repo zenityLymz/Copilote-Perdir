@@ -31,7 +31,11 @@ from .dependencies import (
     get_drive_service,
     set_drive_service,
     get_telegram_service,
-    set_telegram_service
+    set_telegram_service,
+    get_token_tracker_service,
+    set_token_tracker_service,
+    get_gemini_router_service,
+    set_gemini_router_service
 )
 
 # --- Configuration ---

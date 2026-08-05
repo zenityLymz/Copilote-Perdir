@@ -1,4 +1,5 @@
 import os
+import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,7 @@ from src.agents import OrchestratorAgent
 from src.services import TelegramBotService
 from src.core import ChatHistory, ConversationTurn, get_settings
 from src.utils import split_telegram_message
+from src.core.dependencies import get_gemini_router_service
 
 # Initialisation du logger
 logger = get_logger(__name__)
@@ -36,6 +38,7 @@ class PipelineBTelegram:
         self.telegram_service = telegram_service
         self.orchestrator_agent = orchestrator_agent
         self.history_file_path = Path("data/chat_history.json")
+        self._memory_lock = asyncio.Lock()
         
         # Restauration ou initialisation de la mémoire locale de la conversation
         if self.history_file_path.exists():
@@ -92,10 +95,11 @@ class PipelineBTelegram:
         logger.debug(f"Requête utilisateur extraite : {user_text}")
 
         # 2. Mettre à jour la mémoire et sauvegarder
-        self.chat_history.turns.append(
-            ConversationTurn(role="user", message=user_text)
-        )
-        self._save_history()
+        async with self._memory_lock:
+            self.chat_history.turns.append(
+                ConversationTurn(role="user", message=user_text)
+            )
+            self._save_history()
 
         try:
             # Afficher l'indicateur "Le bot est en train d'écrire..." pour faire patienter l'utilisateur
@@ -108,10 +112,11 @@ class PipelineBTelegram:
             )
             
             # 4. Mettre à jour la mémoire avec la réponse IA et sauvegarder
-            self.chat_history.turns.append(
-                ConversationTurn(role="model", message=ai_response)
-            )
-            self._save_history()
+            async with self._memory_lock:
+                self.chat_history.turns.append(
+                    ConversationTurn(role="model", message=ai_response)
+                )
+                self._save_history()
             
             # 5. Renvoyer la réponse de l'IA au chef d'établissement
             # Utilisation de text_utils pour éviter de crasher sur la limite de caractères Telegram (4096)
@@ -140,27 +145,23 @@ class PipelineBTelegram:
         # Cela évite les I/O inutiles sur le disque du Raspberry Pi
         audio_bytes = await telegram_file.download_as_bytearray()
         
-        # 3. Préparation du client Gemini
-        settings = get_settings()
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        
-        # 4. Création de l'objet "Part" pour l'API
-        # Les notes vocales Telegram sont généralement au format OGG (audio/ogg)
+        # 3. Création de l'objet "Part" pour l'API
         audio_part = types.Part.from_bytes(
             data=bytes(audio_bytes),
             mime_type=audio_attachment.mime_type or 'audio/ogg'
         )
         
-        # 5. Appel asynchrone à Gemini Flash
+        # 4. Appel asynchrone via le ROUTEUR
+        router = get_gemini_router_service()
         prompt = "Transcris ce message vocal avec une précision absolue. Ne rajoute absolument aucun commentaire, renvoie UNIQUEMENT le texte prononcé."
         
-        # On utilise le modèle FLASH configuré dans vos settings
-        response = await client.aio.models.generate_content(
-            model=settings.GEMINI_FLASH_MODEL, 
+        response = await router.generate_content(
+            model_tier="flash",
             contents=[audio_part, prompt],
             config=types.GenerateContentConfig(
-                temperature=0.0 # Température à 0 pour éviter la moindre hallucination ou invention de texte
-            )
+                temperature=0.0 # Température à 0 pour éviter la moindre hallucination
+            ),
+            action_context="Transcription_Audio_Telegram"
         )
         
         return response.text.strip()

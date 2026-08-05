@@ -2,9 +2,9 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from src.core.config import get_settings
 from src.core.exceptions import AgentError
 from src.utils.logger import get_logger
+from src.core.dependencies import get_gemini_router_service
 
 # Importation des constructeurs de prompts mis à jour
 from src.prompts.synth_prompts import (
@@ -24,23 +24,15 @@ class SynthAgent:
     de la journée et mettre à jour rigoureusement le fichier Markdown "Mémoire de l'Établissement".
     """
 
-    def __init__(self, api_key: str, model_name: Optional[str] = None) -> None:
+    def __init__(self) -> None:
         """
         Initialise le client de l'API Gemini pour les tâches de synthèse complexes.
 
-        Args:
-            api_key (str): La clé API Google Gemini.
-            model_name (Optional[str]): Le nom du modèle à utiliser (Gemini Pro recommandé).
         """
         try:
-            settings = get_settings()
-            self.client = genai.Client(api_key=api_key)
+            self.router = get_gemini_router_service()
             
-            # Utilisation de Gemini Pro par défaut pour sa capacité de raisonnement (fenêtre de contexte large)
-            #self.model_name = model_name or settings.GEMINI_PRO_MODEL
-            self.model_name = model_name or settings.GEMINI_FLASH_MODEL #Flash pour les tests
-            
-            logger.debug(f"SynthAgent initialisé avec succès (Modèle: {self.model_name}).")
+            logger.debug(f"SynthAgent initialisé avec succès via GeminiRouterService.")
         except Exception as e:
             logger.error(f"Erreur lors de l'initialisation du client Gemini (Synthèse) : {e}")
             raise AgentError(f"Impossible d'initialiser l'Agent de Synthèse : {e}")
@@ -68,15 +60,16 @@ class SynthAgent:
             user_prompt = build_pilotage_update_prompt(current_markdown, daily_info)
 
             # 2. Appel asynchrone à l'API Gemini Pro
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
+            response = await self.router.generate_content(
+                model_tier="pro",
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     # Température très basse (0.1) : On exige de la rigueur structurelle (Markdown),
                     # l'IA ne doit faire preuve d'aucune créativité littéraire ici.
                     temperature=0.1, 
-                )
+                ),
+                action_context="Synthese_Nocturne_PRO"
             )
 
             if not response.text:
@@ -125,15 +118,15 @@ class SynthAgent:
             # Récupération du prompt dédié au résumé
             user_prompt = build_summary_prompt(changes_diff)
 
-            # Appel asynchrone (On peut utiliser Gemini Flash ici pour aller plus vite,
-            # mais on garde le Pro instancié par simplicité et cohérence).
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
+            # On bascule sur le modèle FLASH pour le résumé simple
+            response = await self.router.generate_content(
+                model_tier="flash",
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     # Température légèrement plus haute (0.3) pour un ton plus naturel dans le résumé
                     temperature=0.3, 
-                )
+                ),
+                action_context="Synthese_Resume_Telegram"
             )
 
             if not response.text:

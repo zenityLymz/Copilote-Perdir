@@ -22,7 +22,6 @@ from .briefing_prompts import (
 )
 from .main_courante_prompts import (
     get_main_courante_system_prompt,
-    build_main_courante_mail_prompt,
     build_main_courante_text_prompt
 )
 from .orchestrator_prompts import (

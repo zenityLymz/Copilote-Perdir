@@ -48,10 +48,7 @@ async def preparer_brouillon_main_courante(texte_brut: str) -> str:
     # 2. Création du brouillon en Markdown via le sous-agent spécialisé
     try:
         from src.agents import MainCouranteAgent
-        agent = MainCouranteAgent(
-            api_key=settings.GEMINI_API_KEY, 
-            model_name=settings.GEMINI_FLASH_MODEL
-        )
+        agent = MainCouranteAgent()
         
         brouillon = await agent.format_from_text(
             raw_text=texte_brut, 

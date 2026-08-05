@@ -6,6 +6,7 @@ from src.core.models import MailObject
 from src.core.config import get_settings
 from src.core.exceptions import AgentError
 from src.utils.logger import get_logger
+from src.core.dependencies import get_gemini_router_service
 
 # Importation des constructeurs de prompts que nous venons de créer
 from src.prompts.briefing_prompts import (
@@ -23,18 +24,14 @@ class BriefingAgent:
     structuré, concis et directement lisible sur Telegram.
     """
 
-    def __init__(self, api_key: str, model_name: Optional[str] = None) -> None:
+    def __init__(self) -> None:
         """
         Initialise le client de l'API Gemini pour la génération de briefings.
         """
         try:
-            settings = get_settings()
-            self.client = genai.Client(api_key=api_key)
-            # Utilisation de Gemini Flash par défaut : il est ultra-rapide 
-            # et largement assez intelligent pour de la synthèse de texte.
-            self.model_name = model_name or settings.GEMINI_FLASH_MODEL
+            self.router = get_gemini_router_service()
             
-            logger.debug(f"BriefingAgent initialisé avec succès (Modèle: {self.model_name}).")
+            logger.debug(f"BriefingAgent initialisé avec succès via GeminiRouterService.")
         except Exception as e:
             logger.error(f"Erreur lors de l'initialisation du client Gemini (Briefing) : {e}")
             raise AgentError(f"Impossible d'initialiser l'Agent de Briefing : {e}")
@@ -54,14 +51,15 @@ class BriefingAgent:
             user_prompt = build_briefing_prompt(emails, user_instruction)
 
             # 2. Appel asynchrone à l'API Gemini
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
+            response = await self.router.generate_content(
+                model_tier="flash",
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     # Température basse (0.2) : On veut de la précision factuelle, pas de l'invention littéraire
                     temperature=0.2, 
-                )
+                ),
+                action_context="Briefing_Emails"
             )
 
             if not response.text:

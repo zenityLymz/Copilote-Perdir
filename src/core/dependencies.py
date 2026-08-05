@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from src.services.chroma_service import ChromaDBService
     from src.services.google_drive_api import GoogleDriveService
     from src.services.telegram_bot import TelegramBotService
+    from src.services.token_tracker import TokenTrackerService
+    from src.services.gemini_router import GeminiRouterService
 
 # L'astuce est de mettre le nom du type entre guillemets ('IMAPService') 
 # car la classe n'est pas "réellement" importée à l'exécution.
@@ -23,6 +25,8 @@ _imap_service: Optional['IMAPService'] = None
 _chroma_service: Optional['ChromaDBService'] = None
 _drive_service: Optional['GoogleDriveService'] = None
 _telegram_service: Optional['TelegramBotService'] = None
+_token_tracker_service: Optional['TokenTrackerService'] = None
+_gemini_router_service: Optional['GeminiRouterService'] = None
 
 # --- Service IMAP ---
 def get_imap_service() -> IMAPService:
@@ -63,3 +67,21 @@ def get_telegram_service() -> TelegramBotService:
 def set_telegram_service(service: TelegramBotService) -> None:
     global _telegram_service
     _telegram_service = service
+
+def get_token_tracker_service() -> TokenTrackerService:
+    if _token_tracker_service is None:
+        raise RuntimeError("Le service Token Tracker n'a pas été initialisé dans le registre.")
+    return _token_tracker_service
+
+def set_token_tracker_service(service: TokenTrackerService) -> None:
+    global _token_tracker_service
+    _token_tracker_service = service
+
+def get_gemini_router_service() -> GeminiRouterService:
+    if _gemini_router_service is None:
+        raise RuntimeError("Le service Gemini Router n'a pas été initialisé dans le registre.")
+    return _gemini_router_service
+
+def set_gemini_router_service(service: GeminiRouterService) -> None:
+    global _gemini_router_service
+    _gemini_router_service = service

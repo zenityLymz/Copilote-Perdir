@@ -47,17 +47,18 @@ class IMAPService:
             await asyncio.to_thread(self._connect_sync)
 
     def _connect_sync(self) -> None:
-        """Logique synchrone de connexion exécutée dans un thread séparé."""
+        """Logique synchrone de connexion exécutée dans un thread séparé avec Timeout."""
         logger.info(f"Tentative de connexion au serveur IMAP {self.host}:{self.port}...")
         try:
-            self.mail = imaplib.IMAP4_SSL(self.host, self.port)
+            # Si le serveur (ou la box internet) ne répond pas sous 15 secondes, la connexion est avortée.
+            self.mail = imaplib.IMAP4_SSL(self.host, self.port, timeout=15)
             self.mail.login(self.user, self.password)
             logger.info("Connexion IMAP établie avec succès.")
         except imaplib.IMAP4.error as e:
             logger.error(f"Échec de l'authentification IMAP : {e}")
             raise IMAPError(f"Échec de l'authentification IMAP : {e}")
         except Exception as e:
-            logger.error(f"Erreur de réseau ou de connexion au serveur IMAP : {e}")
+            logger.error(f"Erreur de réseau ou de connexion (Timeout) au serveur IMAP : {e}")
             raise IMAPError(f"Erreur de connexion au serveur IMAP - {e}")
 
     async def disconnect(self) -> None:
@@ -501,7 +502,6 @@ class IMAPService:
 
         try:
             # 1. Regroupement intelligent des e-mails par dossier d'origine
-            # Cela évite de faire des 'SELECT' intempestifs à chaque e-mail
             folders_dict = {}
             for mail in emails:
                 folder = getattr(mail, 'dossier_source', '"INBOX"')
@@ -509,22 +509,25 @@ class IMAPService:
                     folders_dict[folder] = []
                 folders_dict[folder].append(mail.id_mail.encode('utf-8'))
                 
-            # 2. Itération par dossier et marquage par lots (Batching)
+            # 2. Itération par dossier et marquage par lots (Batching sécurisé)
             for folder, uids in folders_dict.items():
-                # On doit ouvrir le dossier en mode écriture (readonly=False)
                 status, _ = self.mail.select(folder, readonly=False)
                 if status != 'OK':
                     logger.warning(f"Impossible de sélectionner le dossier {folder} pour le marquage.")
                     continue
                     
-                # Concaténation des UIDs séparés par une virgule pour une requête IMAP optimisée
-                uids_str = b','.join(uids)
-                status, _ = self.mail.uid('STORE', uids_str, '+FLAGS', 'CopiloteSynthetise')
-                
-                if status == 'OK':
-                    logger.debug(f"{len(uids)} e-mail(s) marqué(s) 'CopiloteSynthetise' dans {folder}.")
-                else:
-                    logger.warning(f"Échec du marquage dans le dossier {folder}.")
+                # DÉCOUPAGE EN SOUS-LOTS POUR PROTÉGER LA LIMITE IMAP
+                taille_lot = 50
+                for i in range(0, len(uids), taille_lot):
+                    sous_lot = uids[i:i + taille_lot]
+                    uids_str = b','.join(sous_lot)
+                    
+                    status, _ = self.mail.uid('STORE', uids_str, '+FLAGS', 'CopiloteSynthetise')
+                    
+                    if status == 'OK':
+                        logger.debug(f"{len(sous_lot)} e-mail(s) marqué(s) 'CopiloteSynthetise' dans {folder}.")
+                    else:
+                        logger.warning(f"Échec du marquage d'un lot dans le dossier {folder}.")
                     
             return True
             

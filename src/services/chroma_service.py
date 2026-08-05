@@ -51,7 +51,7 @@ class ChromaDBService:
         try:
             # Récupération de la configuration
             settings = get_settings()
-            api_key = settings.GEMINI_API_KEY
+            api_key = settings.GEMINI_API_KEY_FREE
 
             # Si aucun nom de modèle n'est fourni, on utilise celui défini dans la configuration
             self.embedding_model_name = embedding_model_name or settings.EMBEDDING_MODEL_NAME

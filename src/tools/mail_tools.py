@@ -1,6 +1,6 @@
 import os
 from typing import Optional
-from src.utils import get_logger
+from src.utils import get_logger, truncate_text_for_llm
 from src.core import get_imap_service, get_chroma_service
 from src.services.chroma_service import ChromaDBService
 
@@ -109,13 +109,17 @@ async def rechercher_dans_les_emails(
             date_reception = meta.get('date_reception', 'Date inconnue')
             mail_expediteur = meta.get('expediteur', 'Expéditeur inconnu')
             sujet = meta.get('sujet', 'Sans objet')
-            texte = res.get('document', '')
+            texte_brut = res.get('document', '')
+            
+            # --- Troncature intelligente pour alléger le prompt de l'Orchestrateur ---
+            # On limite chaque résultat à ~400 tokens (soit environ 1200 caractères)
+            texte_tronque = truncate_text_for_llm(texte_brut, max_tokens=400)
             
             contexte_formate += f"--- E-MAIL {i} ---\n"
             contexte_formate += f"Date : {date_reception}\n"
             contexte_formate += f"De : {mail_expediteur}\n"
             contexte_formate += f"Sujet : {sujet}\n"
-            contexte_formate += f"Extrait du contenu : {texte}\n"
+            contexte_formate += f"Extrait du contenu : {texte_tronque}\n"
             contexte_formate += "-" * 20 + "\n\n"
             
         return contexte_formate
@@ -147,16 +151,11 @@ async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_messag
     imap_service = get_imap_service()
     
     try:
-        await imap_service.connect()
-        # Le nom du dossier Brouillons dépend souvent du serveur (Drafts ou Brouillons). 
-        # "Drafts" est le standard technique IMAP.
         succes = await imap_service.save_draft(destinataire, sujet, corps_message, dossier_brouillons='"Drafts"')
         return succes
     except Exception as e:
         logger.error(f"Échec de l'exécution de l'outil enregistrer_brouillon_mail : {e}")
         return False
-    finally:
-        await imap_service.disconnect()
 
 async def generer_briefing_emails(criteres: Optional[str] = None, limite: int = 50) -> str:
     """
@@ -187,10 +186,7 @@ async def generer_briefing_emails(criteres: Optional[str] = None, limite: int = 
     imap_service = get_imap_service()
     settings = get_settings()
     
-    briefing_agent = BriefingAgent(
-        api_key=settings.GEMINI_API_KEY, 
-        model_name=settings.GEMINI_FLASH_MODEL
-    )
+    briefing_agent = BriefingAgent()
     
     try:
         await imap_service.connect()

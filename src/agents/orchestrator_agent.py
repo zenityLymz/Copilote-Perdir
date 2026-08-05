@@ -7,6 +7,7 @@ from src.core.config import get_settings
 from src.core.exceptions import AgentError
 from src.core.dependencies import get_drive_service
 from src.utils.logger import get_logger
+from src.core.dependencies import get_gemini_router_service
 
 # Importation des constructeurs de prompts
 from src.prompts.orchestrator_prompts import (
@@ -37,22 +38,15 @@ class OrchestratorAgent:
     et invoque dynamiquement des outils (Function Calling) si des actions sont nécessaires.
     """
 
-    def __init__(self, api_key: str, model_name: Optional[str] = None) -> None:
+    def __init__(self) -> None:
         """
         Initialise le client de l'API Gemini pour l'orchestrateur.
 
-        Args:
-            api_key (str): La clé API Google Gemini.
-            model_name (Optional[str]): Le nom du modèle à utiliser.
         """
         try:
-            settings = get_settings()
-            # Initialisation du client SDK natif Google GenAI
-            self.client = genai.Client(api_key=api_key)
-            # Utilisation du modèle Flash par défaut, mais à voir plus tard selon les performances
-            self.model_name = model_name or settings.GEMINI_FLASH_MODEL
+            self.router = get_gemini_router_service()
             
-            logger.debug(f"OrchestratorAgent initialisé avec succès (Modèle: {self.model_name}).")
+            logger.debug(f"OrchestratorAgent initialisé avec succès via GeminiRouterService.")
         except Exception as e:
             logger.error(f"Erreur lors de l'initialisation du client Gemini (Orchestrateur) : {e}")
             raise AgentError(f"Impossible d'initialiser l'Orchestrateur : {e}")
@@ -149,26 +143,33 @@ class OrchestratorAgent:
             formatted_history = self._format_chat_history(chat_history)
 
             # 3. Création de la session de chat asynchrone avec les outils injectés
-            chat = self.client.aio.chats.create(
-                model=self.model_name,
+            response = await self.router.send_chat_message(
                 history=formatted_history,
+                user_message=enriched_user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     tools=self._get_available_tools(),
-                    temperature=0.4, # Un peu de créativité pour le naturel, mais reste déterministe
-                )
+                    temperature=0.4,
+                ),
+                action_context="Orchestrateur_Agentic_Loop"
             )
-
-            # 4. Envoi du message.
-            # Le SDK google-genai gère automatiquement l'exécution des fonctions Python (Function Calling)
-            # si l'IA décide de les appeler, puis il renvoie la réponse finale synthétisée.
-            response = await chat.send_message(enriched_user_prompt)
 
             if not response.text:
                 raise AgentError("La réponse générée par l'Orchestrateur est vide.")
 
+            # --- Filet de sécurité (car normalement géré par le prompt) : Nettoyage et conversion forcée du Markdown en HTML
+            import re
+            final_text = response.text.strip()
+            
+            # 1. Convertir le gras Markdown (**texte**) en HTML (<b>texte</b>)
+            final_text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', final_text)
+            
+            # 2. Convertir les gros titres Markdown (### Titre) en HTML (<b>Titre</b>)
+            final_text = re.sub(r'^#+\s+(.+)$', r'<b>\1</b>', final_text, flags=re.MULTILINE)
+            # --------------------------------------------------------------------
+
             logger.info("Cycle de l'Orchestrateur terminé avec succès.")
-            return response.text.strip()
+            return final_text
 
         except Exception as e:
             logger.error(f"Échec lors du traitement de la requête par l'Orchestrateur : {e}", exc_info=True)
