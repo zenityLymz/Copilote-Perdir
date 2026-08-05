@@ -54,6 +54,12 @@ def setup_logger(log_file_path: Optional[Path] = None, log_level: int = logging.
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 
+    # Réduire au silence les bibliothèques externes très bavardes
+    # On force leur niveau à WARNING, ainsi elles ne loggeront que les vraies erreurs
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("telegram").setLevel(logging.WARNING)
+
 def get_logger(module_name: str) -> logging.Logger:
     """
     Instancie et retourne un logger spécifique pour un module donné.
