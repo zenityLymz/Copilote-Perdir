@@ -78,8 +78,11 @@ class GeminiRouterService:
                 return response
                 
             except Exception as e:
-                if "429" in str(e) or "quota" in str(e).lower():
-                    logger.warning(f"[{action_context}] Quota Gratuit dépassé. BASCULE sur {target_model} (Payant).")
+                error_msg = str(e).lower()
+                # On attrape les quotas (429) ET les surcharges serveurs Google (503, 500)
+                if any(kw in error_msg for kw in ["429", "quota", "503", "500", "overloaded", "high demand"]):
+                    logger.warning(f"[{action_context}] API Gratuite saturée ou quota dépassé. BASCULE sur {target_model} (Payant).")
+                    
                     response = await self.client_paid.aio.models.generate_content(
                         model=target_model, contents=contents, config=config
                     )
@@ -109,8 +112,10 @@ class GeminiRouterService:
             return response
             
         except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower():
-                logger.warning(f"[{action_context}] Quota Flash Gratuit dépassé dans le Chat. BASCULE sur Flash Payant.")
+            error_msg = str(e).lower()
+            if any(kw in error_msg for kw in ["429", "quota", "503", "500", "overloaded", "high demand"]):
+                logger.warning(f"[{action_context}] API Gratuite saturée (Chat). BASCULE sur compte Payant.")
+                
                 # On recrée la session de chat avec le client payant
                 chat_paid = self.client_paid.aio.chats.create(
                     model=self.flash_model, history=history, config=config
