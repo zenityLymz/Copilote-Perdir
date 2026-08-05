@@ -103,6 +103,8 @@ class PipelineCSynthesis:
                             
                             if "pro" in modele.lower():
                                 cost = (in_t * settings.PRICE_PRO_INPUT / 1000000) + (out_t * settings.PRICE_PRO_OUTPUT / 1000000)
+                            elif "lite" in modele.lower():
+                                cost = (in_t * settings.PRICE_FLASH_LITE_INPUT / 1000000) + (out_t * settings.PRICE_FLASH_LITE_OUTPUT / 1000000)
                             else:
                                 cost = (in_t * settings.PRICE_FLASH_INPUT / 1000000) + (out_t * settings.PRICE_FLASH_OUTPUT / 1000000)
                                 

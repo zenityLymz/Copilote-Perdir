@@ -133,8 +133,14 @@ class TokenTrackerService:
                 for row in cursor.fetchall():
                     model, action, tokens = row
                     
-                    # 1. Extraction de la fonction métier (ex: "Triage_Mail_123" -> "Triage")
-                    fonction = action.split('_')[0] if action else "Autre"
+                    # 1. Extraction de la fonction métier et du modèle
+                    fonction_base = action.split('_')[0] if action else "Autre"
+                    
+                    # Extrait dynamiquement "FLASH-LITE", "FLASH", ou "PRO" depuis le nom du modèle
+                    nom_modele = model.split('_')[0].upper() 
+                    
+                    # On fusionne les deux pour l'affichage
+                    fonction = f"{fonction_base} ({nom_modele})"
                     
                     # 2. Séparation Gratuit / Payant
                     categorie = "gratuit" if "gratuit" in model.lower() else "payant"

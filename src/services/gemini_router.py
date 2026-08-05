@@ -24,6 +24,7 @@ class GeminiRouterService:
         self.client_free = genai.Client(api_key=settings.GEMINI_API_KEY_FREE)
         self.client_paid = genai.Client(api_key=settings.GEMINI_API_KEY_PAID)
         
+        self.flash-lite_model = settings.GEMINI_FLASH_LITE_MODEL
         self.flash_model = settings.GEMINI_FLASH_MODEL
         self.pro_model = settings.GEMINI_PRO_MODEL
         
@@ -46,38 +47,45 @@ class GeminiRouterService:
         action_context: str = "Inconnu"
     ) -> Any:
         """
-        Exécute un prompt standard (Utilisé par Triage, Briefing, Synthèse, Main Courante).
+        Exécute un prompt avec gestion du routage (Pro/Flash/Lite) et du Fallback (Gratuit/Payant).
         """
+        # 1. Sélection du modèle exact selon la demande
         if model_tier.lower() == "pro":
-            # Le PRO va TOUJOURS sur le compte payant
-            logger.debug(f"[{action_context}] Routage vers Gemini PRO (Payant).")
+            target_model = self.pro_model
+        elif model_tier.lower() == "flash-lite":
+            target_model = self.flash_lite_model
+        else:
+            target_model = self.flash_model
+
+        # 2. Mécanique de facturation et de Fallback
+        if model_tier.lower() == "pro":
+            logger.debug(f"[{action_context}] Routage vers {target_model} (Payant forcé).")
             response = await self.client_paid.aio.models.generate_content(
-                model=self.pro_model, contents=contents, config=config
+                model=target_model, contents=contents, config=config
             )
             await self._log_tokens(response, "pro_payant", action_context)
             return response
             
         else:
-            # Le FLASH tente d'abord le compte gratuit
+            # Pour "flash" et "flash-lite", on tente d'abord le gratuit
+            tier_name = model_tier.lower() 
             try:
-                logger.debug(f"[{action_context}] Routage vers Gemini FLASH (Gratuit)...")
+                logger.debug(f"[{action_context}] Routage vers {target_model} (Gratuit)...")
                 response = await self.client_free.aio.models.generate_content(
-                    model=self.flash_model, contents=contents, config=config
+                    model=target_model, contents=contents, config=config
                 )
-                await self._log_tokens(response, "flash_gratuit", action_context)
+                await self._log_tokens(response, f"{tier_name}_gratuit", action_context)
                 return response
                 
             except Exception as e:
-                # Si l'erreur mentionne un code 429 (Too Many Requests / Quota)
                 if "429" in str(e) or "quota" in str(e).lower():
-                    logger.warning(f"[{action_context}] Quota Flash Gratuit dépassé. BASCULE sur Flash Payant.")
+                    logger.warning(f"[{action_context}] Quota Gratuit dépassé. BASCULE sur {target_model} (Payant).")
                     response = await self.client_paid.aio.models.generate_content(
-                        model=self.flash_model, contents=contents, config=config
+                        model=target_model, contents=contents, config=config
                     )
-                    await self._log_tokens(response, "flash_payant", action_context)
+                    await self._log_tokens(response, f"{tier_name}_payant", action_context)
                     return response
                 else:
-                    # Autre erreur (ex: 500, erreur réseau) qu'on laisse remonter
                     raise AgentError(f"Erreur API Gemini : {e}")
 
     async def send_chat_message(

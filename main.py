@@ -150,9 +150,12 @@ async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         for modele, data in stats_mois.items():
             in_t, out_t = data['input'], data['output']
             if "pro" in modele.lower():
-                cost = (in_t * getattr(settings, 'PRICE_PRO_INPUT', 1.25) / 1000000) + (out_t * getattr(settings, 'PRICE_PRO_OUTPUT', 5.00) / 1000000)
+                cost = (in_t * settings.PRICE_PRO_INPUT / 1000000) + (out_t * settings.PRICE_PRO_OUTPUT / 1000000)
+            elif "lite" in modele.lower():
+                cost = (in_t * settings.PRICE_FLASH_LITE_INPUT / 1000000) + (out_t * settings.PRICE_FLASH_LITE_OUTPUT / 1000000)
             else:
-                cost = (in_t * getattr(settings, 'PRICE_FLASH_INPUT', 0.075) / 1000000) + (out_t * getattr(settings, 'PRICE_FLASH_OUTPUT', 0.30) / 1000000)
+                cost = (in_t * settings.PRICE_FLASH_INPUT / 1000000) + (out_t * settings.PRICE_FLASH_OUTPUT / 1000000)
+                
             total_cost += cost
             
         # --- Traduction manuelle du mois ---

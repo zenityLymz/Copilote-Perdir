@@ -22,14 +22,17 @@ class Settings(BaseSettings):
     # --- Configuration Gemini IA ---
     GEMINI_API_KEY_FREE: str      # Clé liée au projet Google Cloud SANS carte bancaire
     GEMINI_API_KEY_PAID: str      # Clé liée au projet Google Cloud AVEC facturation
-    GEMINI_FLASH_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_FLASH_LITE_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_FLASH_MODEL: str = "gemini-3.5-flash"
     GEMINI_PRO_MODEL: str = "gemini-3.5-pro"
 
     # --- Tarification Gemini (Prix pour 1 Million de tokens en USD) ---
-    PRICE_PRO_INPUT: float = 1.25
-    PRICE_PRO_OUTPUT: float = 5.00
-    PRICE_FLASH_INPUT: float = 0.075
-    PRICE_FLASH_OUTPUT: float = 0.30
+    PRICE_PRO_INPUT: float = 2.00
+    PRICE_PRO_OUTPUT: float = 12.00
+    PRICE_FLASH_INPUT: float = 1.50
+    PRICE_FLASH_OUTPUT: float = 9.00
+    PRICE_FLASH_LITE_INPUT: float = 0.30
+    PRICE_FLASH_LITE_OUTPUT: float = 2.50
 
     # --- Configuration Google API ---
     GOOGLE_CREDENTIALS_PATH: str = "credentials.json"

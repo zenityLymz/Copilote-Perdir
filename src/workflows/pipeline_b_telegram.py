@@ -156,7 +156,7 @@ class PipelineBTelegram:
         prompt = "Transcris ce message vocal avec une précision absolue. Ne rajoute absolument aucun commentaire, renvoie UNIQUEMENT le texte prononcé."
         
         response = await router.generate_content(
-            model_tier="flash",
+            model_tier="flash-lite",
             contents=[audio_part, prompt],
             config=types.GenerateContentConfig(
                 temperature=0.0 # Température à 0 pour éviter la moindre hallucination
