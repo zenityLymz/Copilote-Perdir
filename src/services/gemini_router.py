@@ -24,7 +24,7 @@ class GeminiRouterService:
         self.client_free = genai.Client(api_key=settings.GEMINI_API_KEY_FREE)
         self.client_paid = genai.Client(api_key=settings.GEMINI_API_KEY_PAID)
         
-        self.flash-lite_model = settings.GEMINI_FLASH_LITE_MODEL
+        self.flash_lite_model = settings.GEMINI_FLASH_LITE_MODEL
         self.flash_model = settings.GEMINI_FLASH_MODEL
         self.pro_model = settings.GEMINI_PRO_MODEL
         
