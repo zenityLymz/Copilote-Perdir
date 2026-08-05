@@ -128,44 +128,68 @@ async def run_pipeline_c_loop(pipeline_c: PipelineCSynthesis, target_hour: int =
             await asyncio.sleep(300)
 
 async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Commande Telegram /finance pour afficher la consommation du mois en cours."""
+    """Commande Telegram /finance pour afficher la consommation visuelle du mois en cours."""
     logger.info("Commande /finance demandée par le Perdir.")
     try:
+        from src.core.config import get_settings
+        settings = get_settings()
         tracker = get_token_tracker_service()
         now = datetime.now()
+        
         # On remonte au 1er jour du mois actuel à 00:00:00
         premier_du_mois = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         
+        # 1. Récupération des données globales pour le calcul monétaire
         stats_mois = await tracker.get_stats(start_date=premier_du_mois)
         
         if not stats_mois:
             await update.message.reply_text("📊 <b>BILAN FINANCIER</b>\n\nAucune consommation enregistrée ce mois-ci.", parse_mode="HTML")
             return
             
-        reponse = f"📊 <b>BILAN FINANCIER ({now.strftime('%B %Y')})</b>\n\n"
         total_cost = 0.0
-        
         for modele, data in stats_mois.items():
             in_t, out_t = data['input'], data['output']
-
-            from src.core.config import get_settings
-            settings = get_settings()
-            
             if "pro" in modele.lower():
-                cost = (in_t * settings.PRICE_PRO_INPUT / 1000000) + (out_t * settings.PRICE_PRO_OUTPUT / 1000000)
+                cost = (in_t * getattr(settings, 'PRICE_PRO_INPUT', 1.25) / 1000000) + (out_t * getattr(settings, 'PRICE_PRO_OUTPUT', 5.00) / 1000000)
             else:
-                cost = (in_t * settings.PRICE_FLASH_INPUT / 1000000) + (out_t * settings.PRICE_FLASH_OUTPUT / 1000000)
-                
+                cost = (in_t * getattr(settings, 'PRICE_FLASH_INPUT', 0.075) / 1000000) + (out_t * getattr(settings, 'PRICE_FLASH_OUTPUT', 0.30) / 1000000)
             total_cost += cost
             
-            # Affichage formaté
-            reponse += f"🔸 <b>{modele.upper()}</b>\n"
-            reponse += f"   - Entrée : {in_t:,}\n".replace(',', ' ')
-            reponse += f"   - Sortie : {out_t:,}\n".replace(',', ' ')
-            
-        reponse += f"\n💰 <b>Coût total estimé : ~{total_cost:.3f} $</b>"
+        # --- Traduction manuelle du mois ---
+        MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", 
+                   "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
+        mois_texte = MOIS_FR[now.month - 1]
+        
+        reponse = f"📊 <b>BILAN FINANCIER ({mois_texte} {now.year})</b>\n\n"
+        reponse += f"💰 <b>Coût total estimé : ~{total_cost:.3f} $</b>\n"
         budget_restant = 10.0 - total_cost
-        reponse += f"\n🏦 <b>Budget Google restant : ~{budget_restant:.3f} $</b>"
+        reponse += f"🏦 <b>Budget Google restant : ~{budget_restant:.3f} $</b>\n\n"
+
+        # 2. Répartition VISUELLE par fonction (Gratuit vs Payant)
+        action_stats = await tracker.get_action_stats(start_date=premier_du_mois)
+        
+        def format_bar(percent: float) -> str:
+            """Génère une barre de progression ASCII proportionnelle"""
+            filled = round((percent / 100) * 10) # Barre sur 10 caractères
+            return "█" * filled + "░" * (10 - filled)
+
+        for categorie in ["gratuit", "payant"]:
+            total_cat = action_stats[categorie]["total"]
+            if total_cat > 0:
+                icone = "🟢" if categorie == "gratuit" else "🟠"
+                reponse += f"{icone} <b>UTILISATION {categorie.upper()}</b>\n"
+                
+                # Tri des actions de la plus gourmande à la moins gourmande
+                actions_triees = sorted(action_stats[categorie]["actions"].items(), key=lambda x: x[1], reverse=True)
+                
+                for fonction, tokens in actions_triees:
+                    pourcentage = (tokens / total_cat) * 100
+                    barre = format_bar(pourcentage)
+                    
+                    reponse += f"  • {fonction} : <b>{pourcentage:.1f}%</b>\n"
+                    # La balise code permet un rendu typographique aligné (monospace) sur Telegram
+                    reponse += f"    <code>{barre}</code>\n"
+                reponse += "\n"
         
         await update.message.reply_text(reponse, parse_mode="HTML")
         

@@ -92,7 +92,7 @@ class PipelineCSynthesis:
                     stats_jour = await tracker.get_stats(start_date=aujourdhui)
                     
                     if stats_jour:
-                        notification += "\n\n📊 <b>CONSOMMATION API (Aujourd'hui)</b>\n"
+                        notification += "\n\n📊 <b>Conso API du jour</b>\n"
                         total_cost = 0.0
                         
                         for modele, data in stats_jour.items():

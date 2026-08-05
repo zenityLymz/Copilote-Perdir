@@ -104,3 +104,49 @@ class TokenTrackerService:
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des statistiques : {e}")
             return {}
+
+    async def get_action_stats(self, start_date: datetime, end_date: Optional[datetime] = None) -> Dict[str, Any]:
+        """
+        Récupère les statistiques d'utilisation regroupées par grande fonction (ex: Triage, Synthese)
+        et séparées entre facturation 'gratuit' et 'payant'.
+        """
+        if not end_date:
+            end_date = datetime.now()
+            
+        async with self._lock:
+            return await asyncio.to_thread(self._get_action_stats_sync, start_date, end_date)
+
+    def _get_action_stats_sync(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        stats = {
+            "gratuit": {"total": 0, "actions": {}},
+            "payant": {"total": 0, "actions": {}}
+        }
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT model_name, action_context, total_tokens
+                    FROM usage_logs
+                    WHERE timestamp >= ? AND timestamp <= ?
+                ''', (start_date.strftime("%Y-%m-%d %H:%M:%S"), end_date.strftime("%Y-%m-%d %H:%M:%S")))
+                
+                for row in cursor.fetchall():
+                    model, action, tokens = row
+                    
+                    # 1. Extraction de la fonction métier (ex: "Triage_Mail_123" -> "Triage")
+                    fonction = action.split('_')[0] if action else "Autre"
+                    
+                    # 2. Séparation Gratuit / Payant
+                    categorie = "gratuit" if "gratuit" in model.lower() else "payant"
+                    
+                    if fonction not in stats[categorie]["actions"]:
+                        stats[categorie]["actions"][fonction] = 0
+                        
+                    # 3. Cumul des tokens
+                    stats[categorie]["actions"][fonction] += tokens
+                    stats[categorie]["total"] += tokens
+                    
+            return stats
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des stats par action : {e}")
+            return stats
