@@ -11,7 +11,7 @@ async def preparer_brouillon_main_courante(texte_brut: str) -> str:
     Analyse un compte-rendu informel d'incident et prépare un brouillon formaté, neutre 
     et juridique pour la Main Courante de l'établissement (au format Markdown).
     
-    ATTENTION POUR L'ORCHESTRATEUR : Cet outil NE SAUVEGARDE PAS le texte. Il te renvoie 
+    ATTENTION POUR LE COPILOTE : Cet outil NE SAUVEGARDE PAS le texte. Il te renvoie 
     uniquement un brouillon. Tu DOIS IMPÉRATIVEMENT présenter ce brouillon au chef 
     d'établissement sur Telegram et lui demander explicitement : "Validez-vous cet ajout ?".
     Ce n'est qu'après son accord que tu pourras utiliser l'outil de sauvegarde.

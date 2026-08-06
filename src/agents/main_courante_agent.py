@@ -20,8 +20,7 @@ class MainCouranteAgent:
     """
     Agent IA spécialisé dans la rédaction et le formatage des incidents 
     pour le journal de bord (Main Courante).
-    Il intervient aussi bien de manière passive (Pipeline A - suite à un e-mail) 
-    qu'active (Pipeline B - suite à un message Telegram).
+    Il intervient à la demande du chef d'établissement via le pipeline Telegram.
     """
 
     def __init__(self) -> None:
