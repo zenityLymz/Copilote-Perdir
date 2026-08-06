@@ -203,10 +203,10 @@ class GoogleDriveService:
 
         logger.debug(f"Mise à jour du fichier ID {file_id}...")
         try:
-            # Création du flux binaire à partir du nouveau texte (pour le format Markdown .md)
+            # Création du flux binaire avec le mimetype HTML natif
             media_body = MediaIoBaseUpload(
                 io.BytesIO(new_content.encode('utf-8')), 
-                mimetype='text/markdown', 
+                mimetype='text/html', 
                 resumable=True
             )
             
@@ -216,7 +216,7 @@ class GoogleDriveService:
                 media_body=media_body
             ).execute()
             
-            logger.info(f"Fichier {file_id} écrasé et mis à jour avec succès.")
+            logger.info(f"Fichier Google Doc {file_id} écrasé et mis à jour avec succès.")
             return True
         except Exception as e:
             logger.error(f"Erreur lors de la mise à jour du fichier {file_id} : {e}")
@@ -286,3 +286,33 @@ class GoogleDriveService:
         except Exception as e:
             logger.error(f"Erreur d'extraction de texte pour {file_id} : {e}")
             raise GoogleAPIError(f"Extraction de texte échouée : {e}")
+
+    async def export_google_doc_as_html(self, file_id: str) -> str:
+        """
+        Exporte un document Google Docs natif au format HTML brut.
+        Sert à la nouvelle étape 'Read' de la mécanique Read-Rewrite-Replace pour la Mémoire.
+        """
+        async with self._lock:
+            return await asyncio.to_thread(self._export_google_doc_as_html_sync, file_id)
+
+    def _export_google_doc_as_html_sync(self, file_id: str) -> str:
+        if not self.service:
+            raise GoogleAPIError("Service Drive non authentifié.")
+
+        logger.debug(f"Export HTML du Google Doc ID {file_id}...")
+        try:
+            # On utilise export_media avec le mimeType text/html (Spécifique aux Google Docs)
+            request = self.service.files().export_media(fileId=file_id, mimeType='text/html')
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+                
+            content = fh.getvalue().decode('utf-8')
+            logger.info(f"Contenu HTML du Google Doc {file_id} exporté avec succès.")
+            return content
+        except Exception as e:
+            logger.error(f"Erreur d'export HTML pour le document {file_id} : {e}")
+            raise GoogleAPIError(f"Export HTML Drive échoué : {e}")

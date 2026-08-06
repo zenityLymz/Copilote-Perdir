@@ -21,7 +21,7 @@ class SynthAgent:
     Agent IA spécialisé dans l'analyse stratégique complexe et la structuration de textes.
     Intervient exclusivement dans le Pipeline C (traitement différé du soir).
     Utilise le modèle avancé (Gemini Pro) pour analyser l'impact des informations 
-    de la journée et mettre à jour rigoureusement le fichier Markdown "Mémoire de l'Établissement".
+    de la journée et mettre à jour rigoureusement le fichier html "Mémoire de l'Établissement".
     """
 
     def __init__(self) -> None:
@@ -37,19 +37,18 @@ class SynthAgent:
             logger.error(f"Erreur lors de l'initialisation du client Gemini (Synthèse) : {e}")
             raise AgentError(f"Impossible d'initialiser l'Agent de Synthèse : {e}")
 
-    async def rewrite_memoire_etablissement_content(self, current_markdown: str, daily_info: str) -> Optional[str]:
+    async def rewrite_memoire_etablissement_content(self, current_html: str, daily_info: str) -> Optional[str]:
         """
         Applique la mécanique "Read-Rewrite-Replace" pour le fichier de mémoire.
         Évalue l'impact des nouvelles informations de la journée (mails + notes Telegram), 
-        fusionne intelligemment les données dans les rubriques concernées du Markdown 
-        sans altérer sa structure.
+        fusionne intelligemment les données dans les rubriques concernées sans altérer sa structure.
 
         Args:
-            current_markdown (str): Le contenu intégral actuel du fichier.
+            current_html (str): Le contenu intégral actuel du fichier.
             daily_info (str): Le texte consolidé contenant tous les événements de la journée.
 
         Returns:
-            Optional[str]: Le nouveau contenu Markdown complet, prêt à écraser l'ancien fichier, 
+            Optional[str]: Le nouveau contenu html complet, prêt à écraser l'ancien fichier, 
                            ou None si l'API échoue.
         """
         logger.info("Début de l'analyse et de la réécriture de la Mémoire de l'Établissement par l'IA.")
@@ -57,7 +56,7 @@ class SynthAgent:
         try:
             # 1. Préparation des prompts
             system_prompt = get_pilotage_system_prompt()
-            user_prompt = build_pilotage_update_prompt(current_markdown, daily_info)
+            user_prompt = build_pilotage_update_prompt(current_html, daily_info)
 
             # 2. Appel asynchrone à l'API Gemini Pro
             response = await self.router.generate_content(
@@ -65,7 +64,7 @@ class SynthAgent:
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
-                    # Température très basse (0.1) : On exige de la rigueur structurelle (Markdown),
+                    # Température très basse (0.1) : On exige de la rigueur structurelle (html),
                     # l'IA ne doit faire preuve d'aucune créativité littéraire ici.
                     temperature=0.1, 
                 ),
@@ -75,11 +74,10 @@ class SynthAgent:
             if not response.text:
                 raise AgentError("La réponse générée par Gemini (SynthAgent) est vide.")
 
-            # 3. Nettoyage de sécurité supplémentaire
-            # Au cas où le LLM ajouterait quand même des balises malgré l'interdiction du prompt
+            # Nettoyage de sécurité adapté au HTML
             final_text = response.text.strip()
-            if final_text.startswith("```markdown"):
-                final_text = final_text[11:]
+            if final_text.startswith("```html"):
+                final_text = final_text[7:]
             if final_text.startswith("```"):
                 final_text = final_text[3:]
             if final_text.endswith("```"):
@@ -92,14 +90,14 @@ class SynthAgent:
             logger.error(f"Échec lors de la réécriture du document par l'Agent de Synthèse : {e}", exc_info=True)
             return None
 
-    async def generate_update_summary(self, old_markdown: str, new_markdown: str) -> str:
+    async def generate_update_summary(self, old_html: str, new_html: str) -> str:
         """
         Génère un résumé des modifications apportées (ajouts, suppressions) au fichier 
         Mémoire, destiné à être envoyé au Perdir via Telegram.
 
         Args:
-            old_markdown (str): L'ancienne version du fichier.
-            new_markdown (str): La nouvelle version du fichier.
+            old_html (str): L'ancienne version du fichier.
+            new_html (str): La nouvelle version du fichier.
             
         Returns:
             str: Un résumé concis des changements (format HTML pour Telegram).
@@ -110,9 +108,9 @@ class SynthAgent:
             # Création du contexte comparatif à envoyer au modèle
             changes_diff = (
                 "--- ANCIENNE VERSION ---\n"
-                f"{old_markdown}\n\n"
+                f"{old_html}\n\n"
                 "--- NOUVELLE VERSION ---\n"
-                f"{new_markdown}"
+                f"{new_html}"
             )
             
             # Récupération du prompt dédié au résumé
