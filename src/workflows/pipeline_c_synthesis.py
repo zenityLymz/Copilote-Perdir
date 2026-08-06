@@ -41,7 +41,7 @@ class PipelineCSynthesis:
             telegram_service (TelegramBotService): Service pour envoyer le résumé des modifications.
             imap_service (IMAPService): Service pour récupérer les e-mails traités/envoyés dans la journée.
             synth_agent (SynthAgent): Agent IA (Pro) capable d'analyses complexes et croisées.
-            memoire_file_id (str): L'ID Google Drive du fichier Markdown de Mémoire de l'Établissement.
+            memoire_file_id (str): L'ID Google Drive du fichier html de Mémoire de l'Établissement.
         """
         self.drive_service = drive_service
         self.telegram_service = telegram_service
@@ -189,11 +189,11 @@ class PipelineCSynthesis:
         """
         Orchestre la mécanique 'Read-Rewrite-Replace' pour le Fichier de mémoire de l'établissement.
         """
-        logger.debug("Mise à jour du fichier Mémoire Etablissement...")
+        logger.debug("Mise à jour du fichier Mémoire Etablissement (Google Doc)...")
         
         # 1. Read
         try:
-             current_markdown = await self.drive_service.download_file_content(self.memoire_file_id)
+             current_html = await self.drive_service.export_google_doc_as_html(self.memoire_file_id)
         except Exception as e:
             logger.error(f"Impossible de lire le fichier mémoire établissement actuel : {e}")
             return None
@@ -202,18 +202,18 @@ class PipelineCSynthesis:
         try:
             backup_dir = Path("data/backups")
             backup_dir.mkdir(parents=True, exist_ok=True)
-            nom_backup = f"memoire_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+            nom_backup = f"memoire_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
             backup_file = backup_dir / nom_backup
-            backup_file.write_text(current_markdown, encoding="utf-8")
+            backup_file.write_text(current_html, encoding="utf-8")
             logger.debug(f"Sauvegarde locale de la mémoire effectuée : {backup_file}")
         except Exception as e:
             logger.warning(f"Échec de la création du backup local : {e}")
             nom_backup = "Erreur de backup"
 
         # 2. Rewrite
-        new_markdown = await self.synth_agent.rewrite_memoire_etablissement_content(current_markdown, daily_info)
+        new_html = await self.synth_agent.rewrite_memoire_etablissement_content(current_html, daily_info)
         
-        if not new_markdown:
+        if not new_html:
              return None
 
 
@@ -221,11 +221,11 @@ class PipelineCSynthesis:
         alertes = []
         
         # Vérification 1 : Amputation massive du texte
-        if len(new_markdown) < (len(current_markdown) * 0.70):
-            alertes.append(f"- Perte de volume suspecte (Ancien: {len(current_markdown)} chars, Nouveau: {len(new_markdown)} chars).")
+        if len(new_html) < (len(current_html) * 0.70):
+            alertes.append(f"- Perte de volume suspecte (Ancien: {len(current_html)} chars, Nouveau: {len(new_html)} chars).")
             
         # Vérification 2 : Calcul du taux de similarité
-        similarity_ratio = difflib.SequenceMatcher(None, current_markdown, new_markdown).ratio()
+        similarity_ratio = difflib.SequenceMatcher(None, current_html, new_html).ratio()
         if similarity_ratio < 0.60:
             alertes.append(f"- Taux de similarité très faible ({similarity_ratio:.2f}). Réécriture potentiellement excessive.")
 
@@ -244,10 +244,10 @@ class PipelineCSynthesis:
             logger.warning("Alerte intégrité envoyée sur Telegram, mais l'écrasement se poursuit.")
              
         # Génération du résumé des modifications
-        summary = await self.synth_agent.generate_update_summary(current_markdown, new_markdown)
+        summary = await self.synth_agent.generate_update_summary(current_html, new_html)
 
         # 3. Replace
-        success = await self.drive_service.update_file_content(self.memoire_file_id, new_markdown)
+        success = await self.drive_service.update_file_content(self.memoire_file_id, new_html)
         
         if success:
             return summary
