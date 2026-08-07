@@ -2,10 +2,12 @@ from typing import List, Optional
 from google import genai
 from google.genai import types
 
+
 from src.core.models import MailObject
 from src.core.exceptions import AgentError
 from src.utils.logger import get_logger
 from src.core.dependencies import get_gemini_router_service
+from src.core.config import get_settings
 
 # Importation des constructeurs de prompts depuis le module dédié
 from src.prompts.main_courante_prompts import (
@@ -56,9 +58,10 @@ class MainCouranteAgent:
             system_prompt = get_main_courante_system_prompt()
             user_prompt = build_main_courante_text_prompt(raw_text, existing_tags)
 
+            settings = get_settings()
             # Appel asynchrone à l'API Gemini
             response = await self.router.generate_content(
-                model_tier="flash",
+                model_tier=settings.MODEL_MAIN_COURANTE,
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,

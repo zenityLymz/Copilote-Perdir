@@ -50,9 +50,10 @@ class BriefingAgent:
             system_prompt = get_briefing_system_prompt()
             user_prompt = build_briefing_prompt(emails, user_instruction)
 
+            settings = get_settings()
             # 2. Appel asynchrone à l'API Gemini
             response = await self.router.generate_content(
-                model_tier="flash",
+                model_tier=settings.MODEL_BRIEFING_EMAILS,
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,

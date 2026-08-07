@@ -25,7 +25,18 @@ class Settings(BaseSettings):
     GEMINI_API_KEY_PAID: str      # Clé liée au projet Google Cloud AVEC facturation
     GEMINI_FLASH_LITE_MODEL: str = "gemini-3.5-flash-lite"
     GEMINI_FLASH_MODEL: str = "gemini-3.5-flash"
-    GEMINI_PRO_MODEL: str = "gemini-3.5-flash"#Mettre pro quand on aura activé l'API payante
+    GEMINI_PRO_MODEL: str = "gemini-3.5-pro"#Mettre pro quand on aura activé l'API payante
+
+    # --- Assignation des modèles par fonction ---
+    # Valeurs acceptées : "flash-lite", "flash", "pro"
+    MODEL_AUDIO_TRANSCRIPTION: str = "flash-lite"
+    MODEL_TRIAGE_EMAILS: str = "flash-lite"        # Tâche simple (JSON), flash-lite est idéal
+    MODEL_BRIEFING_EMAILS: str = "flash-lite"      # Résumé basique, flash-lite excelle
+    MODEL_MAIN_COURANTE: str = "flash"             # Formatage de texte avec contraintes assez forte, flash est sans doute pas mal, flash-lite a du mal avec les tags @Personnes
+    MODEL_SYNTHESIS_SUMMARY: str = "flash-lite"    # Résumé Telegram de fin de journée
+    MODEL_ORCHESTRATOR: str = "flash"              # ATTENTION: Nécessite "flash" pour bien utiliser les Outils
+    MODEL_SYNTHESIS_DOC: str = "flash"             # ATTENTION: Nécessite "flash" ou "pro" pour gérer le HTML
+
 
     # --- Temps de pause entre les appels à l'API Gemini pour éviter le throttling ---
     GEMINI_API_PAUSE_SECONDS: float = 10.0

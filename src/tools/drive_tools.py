@@ -189,3 +189,31 @@ async def rechercher_info_drive(mots_cles: str) -> str:
     except Exception as e:
         logger.error(f"Erreur globale dans rechercher_info_drive: {e}")
         return "Une erreur technique est survenue lors de la recherche dans le Drive. Vérifiez l'authentification."
+
+
+
+async def lire_memoire_etablissement() -> str:
+    """
+    Lit et retourne le contenu intégral du document officiel "Mémoire de l'Établissement".
+    ATTENTION POUR LE COPILOTE : Utilise cet outil SANS AUCUN PARAMÈTRE dès que tu as 
+    besoin de connaître les règles de l'établissement, l'annuaire du personnel (qui fait quoi), 
+    ou l'historique récent du collège pour comprendre le contexte d'une demande.
+    """
+    logger.info("Outil 'lire_memoire_etablissement' appelé par l'Orchestrateur.")
+
+    try:
+        drive_service = get_drive_service()
+        settings = get_settings()
+        file_id = settings.MEMOIRE_FILE_ID
+        
+        # On utilise le téléchargement en texte brut ultra-léger
+        contenu = await drive_service.get_file_text_content(
+            file_id=file_id, 
+            mime_type='application/vnd.google-apps.document'
+        )
+        
+        return f"Voici le contenu de la Mémoire de l'Établissement :\n\n{contenu}"
+        
+    except Exception as e:
+        logger.error(f"Erreur lors de la lecture directe de la mémoire : {e}")
+        return "Erreur technique : Impossible d'accéder au fichier Mémoire de l'Établissement."

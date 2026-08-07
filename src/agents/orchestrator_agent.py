@@ -22,7 +22,8 @@ from src.tools import (
     programmer_alerte, 
     preparer_brouillon_main_courante,
     sauvegarder_main_courante_validee,
-    rechercher_info_drive, 
+    rechercher_info_drive,
+    lire_memoire_etablissement,
     rechercher_dans_les_emails, 
     enregistrer_brouillon_mail, 
     generer_briefing_emails
@@ -66,6 +67,7 @@ class OrchestratorAgent:
             preparer_brouillon_main_courante,
             sauvegarder_main_courante_validee,
             rechercher_info_drive,
+            lire_memoire_etablissement,
             rechercher_dans_les_emails,
             enregistrer_brouillon_mail,
             generer_briefing_emails
@@ -106,7 +108,11 @@ class OrchestratorAgent:
             file_id = settings.MEMOIRE_FILE_ID
             
             logger.debug("Téléchargement de la mémoire de l'établissement depuis Google Drive...")
-            content = await drive_service.download_file_content(file_id)
+            # On utilise l'exportation en TEXTE BRUT pour diviser le poids du prompt par 10 !
+            content = await drive_service.get_file_text_content(
+                file_id=file_id, 
+                mime_type='application/vnd.google-apps.document'
+            )
             return content
         except Exception as e:
             # Dégradation gracieuse : On loggue l'erreur mais on ne crashe pas
@@ -129,21 +135,19 @@ class OrchestratorAgent:
         logger.info("Début du cycle de raisonnement de l'Orchestrateur (Agentic Loop).")
         
         try:
-            # 1. Téléchargement à la volée de la mémoire (Annuaire, Règles)
-            memoire_content = await self._fetch_memoire_etablissement()
-
-            # 2. Préparation du contexte et des prompts
+            # 1. Préparation du contexte et des prompts
             system_prompt = get_orchestrator_system_prompt()
             
-            # Injection dynamique de la date, heure, mémoire, et alertes éventuelles (vide pour l'instant)
             enriched_user_prompt = build_orchestrator_prompt(
-                user_message=user_message,
-                memoire_etablissement=memoire_content
+                user_message=user_message
             )
             formatted_history = self._format_chat_history(chat_history)
 
+            settings = get_settings()
+            
             # 3. Création de la session de chat asynchrone avec les outils injectés
             response = await self.router.send_chat_message(
+                model_tier=settings.MODEL_ORCHESTRATOR,
                 history=formatted_history,
                 user_message=enriched_user_prompt,
                 config=types.GenerateContentConfig(

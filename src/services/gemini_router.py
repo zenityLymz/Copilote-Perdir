@@ -93,6 +93,7 @@ class GeminiRouterService:
 
     async def send_chat_message(
         self,
+        model_tier: str,
         history: List[types.Content],
         user_message: str,
         config: types.GenerateContentConfig,
@@ -102,13 +103,21 @@ class GeminiRouterService:
         Spécifique pour l'Orchestrateur (Pipeline B) qui utilise une session de Chat 
         pour maintenir le contexte et utiliser le Function Calling (Outils).
         """
+        # Résolution du modèle selon le paramètre
+        if model_tier.lower() == "pro":
+            target_model = self.pro_model
+        elif model_tier.lower() == "flash-lite":
+            target_model = self.flash_lite_model
+        else:
+            target_model = self.flash_model
+
         try:
-            # L'Orchestrateur utilise Flash. On tente d'abord en gratuit.
+            # On tente d'abord en gratuit avec le modèle ciblé
             chat_free = self.client_free.aio.chats.create(
-                model=self.flash_model, history=history, config=config
+                model=target_model, history=history, config=config
             )
             response = await chat_free.send_message(user_message)
-            await self._log_tokens(response, "flash_gratuit", action_context)
+            await self._log_tokens(response, f"{model_tier.lower()}_gratuit", action_context)
             return response
             
         except Exception as e:
@@ -118,10 +127,10 @@ class GeminiRouterService:
                 
                 # On recrée la session de chat avec le client payant
                 chat_paid = self.client_paid.aio.chats.create(
-                    model=self.flash_model, history=history, config=config
+                    model=target_model, history=history, config=config
                 )
                 response = await chat_paid.send_message(user_message)
-                await self._log_tokens(response, "flash_payant", action_context)
+                await self._log_tokens(response, f"{model_tier.lower()}_payant", action_context)
                 return response
             else:
                 raise AgentError(f"Erreur API Gemini (Chat) : {e}")

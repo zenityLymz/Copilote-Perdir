@@ -52,7 +52,7 @@ class TriageAgent:
 
             # 2. Appel à l'API Gemini via notre routeur central (Gestion 429 et Tracker)
             response = await self.router.generate_content(
-                model_tier="flash",
+                model_tier=settings.MODEL_TRIAGE_EMAILS,
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,

@@ -147,15 +147,24 @@ class IMAPService:
             mail_ids = mail_ids[-limit:]
             emails_list = []
             
-            for mail_id in mail_ids: # On utilise BODY.PEEK[] pour télécharger le mail sans enlever le flag UNSEEN
-                status, msg_data = self.mail.uid('fetch', mail_id, '(BODY.PEEK[])')
-                if status != 'OK':
-                    continue
-
-                mail_obj = self._parse_email_from_bytes(mail_id, msg_data)
-                if mail_obj:
-                    emails_list.append(mail_obj)
-
+            if not mail_ids:
+                return []
+                
+            # --- BATCH FETCHING ---
+            uids_str = b','.join(mail_ids)
+            status, msg_data = self.mail.uid('fetch', uids_str, '(BODY.PEEK[])')
+            
+            if status == 'OK':
+                for part in msg_data:
+                    if isinstance(part, tuple):
+                        header_str = part[0].decode('utf-8', errors='ignore')
+                        match = re.search(r'UID\s+(\d+)', header_str, re.IGNORECASE)
+                        uid = match.group(1).encode('utf-8') if match else b"inconnu"
+                        
+                        mail_obj = self._parse_email_from_bytes(uid, [part])
+                        if mail_obj:
+                            emails_list.append(mail_obj)
+                            
             logger.info(f"{len(emails_list)} e-mail(s) non lu(s) récupéré(s) et formaté(s).")
             return emails_list
 
@@ -277,65 +286,76 @@ class IMAPService:
 
     def _fetch_all_unseen_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
         """
-        Logique synchrone qui liste tous les dossiers, les sélectionne un par un,
-        et récupère les messages UNSEEN.
+        Logique synchrone optimisée avec BATCH FETCHING DYNAMIQUE.
+        Parcourt tous les dossiers de l'arborescence et télécharge par lots.
         """
         import re
-        import email
-        from email import policy
-        import email.utils
-        from datetime import datetime
-        
-        self._ensure_connected()
 
-        logger.info("Récupération de la liste de tous les dossiers IMAP...")
+        self._ensure_connected()
+        logger.info("Récupération de la liste de tous les dossiers IMAP (Scan complet)...")
         emails_list = []
-        
         try:
+            # 1. On liste tous les dossiers présents sur le serveur sans les nommer
             status, folders = self.mail.list()
             if status != 'OK':
                 raise IMAPError("Impossible de lister les dossiers de la messagerie.")
-
+                
             for folder_data in folders:
                 folder_str = folder_data.decode('utf-8')
                 
-                # Extraction propre du nom du dossier (qui se trouve à la fin de la chaîne)
+                # --- SÉCURITÉ : Ignorer la corbeille et les spams ---
+                # On exclut les dossiers "poubelle" pour ne pas résumer les indésirables
+                if "trash" in folder_str.lower() or "corbeille" in folder_str.lower() or "deleted" in folder_str.lower() or "spam" in folder_str.lower() or "junk" in folder_str.lower():
+                    continue
+
+                # 2. Extraction propre du nom du dossier
                 match = re.search(r'\"([^\"]+)\"$', folder_str)
                 if match:
                     folder_name = f'"{match.group(1)}"'
                 else:
                     folder_name = folder_str.split()[-1]
-
-                # On sélectionne le dossier en mode lecture seule
+                
+                # 3. On sélectionne le dossier en mode lecture seule
                 status, _ = self.mail.select(folder_name, readonly=True)
-                if status != 'OK':
-                    continue # On ignore les dossiers inaccessibles (ex: \Noselect)
-
-                # Recherche STRICTE des mails non lus par l'humain
+                if status != 'OK': 
+                    continue # On ignore silencieusement les dossiers inaccessibles
+                
+                # 4. Recherche STRICTE des mails non lus par l'humain
                 status, messages = self.mail.uid('search', None, 'UNSEEN')
                 if status != 'OK' or not messages[0]:
                     continue
-
-                mail_ids = messages[0].split()
-                # On limite le nombre pour ne pas saturer la mémoire si un dossier a 500 mails non lus
-                mail_ids = mail_ids[-limit_per_folder:] 
                 
-                for mail_id in mail_ids:
-                    # On utilise BODY.PEEK[] pour lire le mail SANS enlever le drapeau UNSEEN !
-                    status, msg_data = self.mail.uid('fetch', mail_id, '(BODY.PEEK[])')
-                    if status != 'OK':
-                        continue
-
-                    mail_obj = self._parse_email_from_bytes(mail_id, msg_data)
-                    if mail_obj:
-                        emails_list.append(mail_obj)
-
+                mail_ids = messages[0].split()
+                # On limite le nombre pour ne pas saturer la mémoire
+                mail_ids = mail_ids[-limit_per_folder:]
+                
+                if not mail_ids:
+                    continue
+                    
+                # --- 5. BATCH FETCHING  ---
+                uids_str = b','.join(mail_ids)
+                status, msg_data = self.mail.uid('fetch', uids_str, '(BODY.PEEK[])')
+                
+                if status == 'OK':
+                    for part in msg_data:
+                        if isinstance(part, tuple):
+                            # Extraction de l'identifiant pour la reconstruction
+                            header_str = part[0].decode('utf-8', errors='ignore')
+                            match_uid = re.search(r'UID\s+(\d+)', header_str, re.IGNORECASE)
+                            uid = match_uid.group(1).encode('utf-8') if match_uid else b"inconnu"
+                            
+                            # Création de l'objet Mail
+                            mail_obj = self._parse_email_from_bytes(uid, [part])
+                            if mail_obj:
+                                emails_list.append(mail_obj)
+                            
             logger.info(f"{len(emails_list)} e-mail(s) UNSEEN trouvé(s) au total dans l'arborescence.")
             return emails_list
-
+            
         except Exception as e:
             logger.error(f"Erreur lors du scan global des e-mails non lus : {e}")
             raise IMAPError(f"Erreur IMAP globale : {e}")
+
 
 
     def _parse_email_from_bytes(self, mail_id: bytes, msg_data: list) -> Optional[MailObject]:
@@ -448,59 +468,61 @@ class IMAPService:
     def _fetch_unsynthesized_emails_sync(self, limit_per_folder: int) -> List[MailObject]:
         import re
         self._ensure_connected()
-
-        logger.info("Récupération des e-mails non synthétisés (UNKEYWORD CopiloteSynthetise)...")
+        logger.info("Récupération des e-mails non synthétisés (UNKEYWORD CopiloteSynthetise) par lots...")
         emails_list = []
-        
         try:
             status, folders = self.mail.list()
             if status != 'OK':
                 raise IMAPError("Impossible de lister les dossiers de la messagerie.")
-
+                
             for folder_data in folders:
                 folder_str = folder_data.decode('utf-8')
-                
                 # Exclusion de la corbeille (adapter selon les noms usuels)
                 if "trash" in folder_str.lower() or "corbeille" in folder_str.lower() or "deleted" in folder_str.lower():
                     continue
-
-                # Extraction propre du nom du dossier IMAP
+                    
+                # Extraction du nom du dossier
                 match = re.search(r'\"([^\"]+)\"$', folder_str)
                 if match:
                     folder_name = f'"{match.group(1)}"'
                 else:
                     folder_name = folder_str.split()[-1]
-
-                # Sélection en lecture seule (sécurité supplémentaire)
+                
                 status, _ = self.mail.select(folder_name, readonly=True)
                 if status != 'OK':
                     continue
-
-                # On cherche ceux qui n'ont PAS le tag CopiloteSynthetise
+                
                 status, messages = self.mail.uid('search', None, 'UNKEYWORD', 'CopiloteSynthetise')
                 if status != 'OK' or not messages[0]:
                     continue
-
-                mail_ids = messages[0].split()
-                mail_ids = mail_ids[-limit_per_folder:] 
                 
-                for mail_id in mail_ids:
-                    status, msg_data = self.mail.uid('fetch', mail_id, '(BODY.PEEK[])')
-                    if status != 'OK':
-                        continue
-
-                    mail_obj = self._parse_email_from_bytes(mail_id, msg_data)
-                    if mail_obj:
-                        # Injection du dossier source pour permettre le marquage ultérieur
-                        mail_obj.dossier_source = folder_name
-                        emails_list.append(mail_obj)
-
-            logger.info(f"{len(emails_list)} e-mail(s) en attente de synthèse récupéré(s).")
+                mail_ids = messages[0].split()
+                mail_ids = mail_ids[-limit_per_folder:]
+                
+                if not mail_ids:
+                    continue
+                    
+                # --- BATCH FETCHING ---
+                uids_str = b','.join(mail_ids)
+                status, msg_data = self.mail.uid('fetch', uids_str, '(BODY.PEEK[])')
+                
+                if status == 'OK':
+                    for part in msg_data:
+                        if isinstance(part, tuple):
+                            header_str = part[0].decode('utf-8', errors='ignore')
+                            match = re.search(r'UID\s+(\d+)', header_str, re.IGNORECASE)
+                            uid = match.group(1).encode('utf-8') if match else b"inconnu"
+                            
+                            mail_obj = self._parse_email_from_bytes(uid, [part])
+                            if mail_obj:
+                                emails_list.append(mail_obj)
+                                
+            logger.info(f"{len(emails_list)} e-mail(s) à synthétiser récupéré(s) au total.")
             return emails_list
-
+            
         except Exception as e:
-            logger.error(f"Erreur lors de la récupération des e-mails pour la synthèse : {e}")
-            raise IMAPError(f"Erreur IMAP globale (Synthèse) : {e}")
+            logger.error(f"Erreur lors du scan global des e-mails pour la synthèse : {e}")
+            raise IMAPError(f"Erreur IMAP globale : {e}")
 
 
     async def mark_emails_as_synthesized(self, emails: List[MailObject]) -> bool:
@@ -600,7 +622,7 @@ class IMAPService:
                 logger.debug("Timeout IDLE de sécurité (4 min 30 s) atteint. Préparation du Ping.")
 
             # 5. Sortie propre du mode IDLE (Obligatoire pour que le serveur ne plante pas)
-            self.mail_listener.send(b"DONE\r\n")
+            if self.mail_listener: self.mail_listener.send(b"DONE\r\n")
             
             # --- SÉCURITÉ ANTI-BLOCAGE ---
             # On force le socket à ne pas attendre plus de 5 secondes la réponse du serveur

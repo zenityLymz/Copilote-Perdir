@@ -18,7 +18,8 @@ from .mail_tools import (
 from .drive_tools import (
     preparer_brouillon_main_courante,
     sauvegarder_main_courante_validee,
-    rechercher_info_drive
+    rechercher_info_drive,
+    lire_memoire_etablissement
 )
 
 # --- Outils d'Agenda et de Planification (Google Calendar / Tasks) ---

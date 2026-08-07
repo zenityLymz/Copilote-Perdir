@@ -154,9 +154,10 @@ class PipelineBTelegram:
         # 4. Appel asynchrone via le ROUTEUR
         router = get_gemini_router_service()
         prompt = "Transcris ce message vocal avec une précision absolue. Ne rajoute absolument aucun commentaire, renvoie UNIQUEMENT le texte prononcé."
-        
+
+        settings = get_settings()
         response = await router.generate_content(
-            model_tier="flash-lite",
+            model_tier=settings.MODEL_AUDIO_TRANSCRIPTION,
             contents=[audio_part, prompt],
             config=types.GenerateContentConfig(
                 temperature=0.0 # Température à 0 pour éviter la moindre hallucination

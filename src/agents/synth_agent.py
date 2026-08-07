@@ -5,6 +5,7 @@ from google.genai import types
 from src.core.exceptions import AgentError
 from src.utils.logger import get_logger
 from src.core.dependencies import get_gemini_router_service
+from src.core.config import get_settings
 
 # Importation des constructeurs de prompts mis à jour
 from src.prompts.synth_prompts import (
@@ -58,9 +59,10 @@ class SynthAgent:
             system_prompt = get_pilotage_system_prompt()
             user_prompt = build_pilotage_update_prompt(current_html, daily_info)
 
+            settings = get_settings()
             # 2. Appel asynchrone à l'API Gemini Pro
             response = await self.router.generate_content(
-                model_tier="pro",
+                model_tier=settings.MODEL_SYNTHESIS_DOC,
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
@@ -118,7 +120,7 @@ class SynthAgent:
 
             # On bascule sur le modèle FLASH pour le résumé simple
             response = await self.router.generate_content(
-                model_tier="flash",
+                model_tier=settings.MODEL_SYNTHESIS_SUMMARY,
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     # Température légèrement plus haute (0.3) pour un ton plus naturel dans le résumé
