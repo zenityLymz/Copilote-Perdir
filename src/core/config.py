@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     IMAP_USER: str
     IMAP_PASSWORD: str
     IMAP_PORT: int = 993
+    IMAP_MODE: str = "idle" #"polling" (recherche toutes les X minutes) ou "idle" (écoute permanente)
 
     # --- Configuration Telegram ---
     TELEGRAM_BOT_TOKEN: str
@@ -24,7 +25,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY_PAID: str      # Clé liée au projet Google Cloud AVEC facturation
     GEMINI_FLASH_LITE_MODEL: str = "gemini-3.5-flash-lite"
     GEMINI_FLASH_MODEL: str = "gemini-3.5-flash"
-    GEMINI_PRO_MODEL: str = "gemini-3.5-pro"
+    GEMINI_PRO_MODEL: str = "gemini-3.5-flash"#Mettre pro quand on aura activé l'API payante
+
+    # --- Temps de pause entre les appels à l'API Gemini pour éviter le throttling ---
+    GEMINI_API_PAUSE_SECONDS: float = 10.0
 
     # --- Tarification Gemini (Prix pour 1 Million de tokens en USD) ---
     PRICE_PRO_INPUT: float = 2.00
@@ -45,9 +49,6 @@ class Settings(BaseSettings):
     # --- Configuration ChromaDB ---
     CHROMA_PERSIST_DIR: str = "data/chroma_db"
     EMBEDDING_MODEL_NAME: str = "gemini-embedding-001"
-
-    # --- Temps de pause entre les appels à l'API Gemini pour éviter le throttling ---
-    GEMINI_API_PAUSE_SECONDS: float = 10.0
 
     # --- Nombre de jours de mémoire à conserver pour le contexte conversationnel ---
     CHAT_HISTORY_DAYS: int = 7

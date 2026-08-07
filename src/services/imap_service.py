@@ -1,6 +1,7 @@
 import asyncio
 import imaplib
 import email
+import select
 from email import policy
 import email.utils
 from datetime import datetime
@@ -34,9 +35,15 @@ class IMAPService:
         self.user = user or settings.IMAP_USER
         self.password = password or settings.IMAP_PASSWORD
         self.port = port or settings.IMAP_PORT
-        
+
+        # --- VARIABLES POUR LE MODE WORKER (POLLING) ---
         self.mail: Optional[imaplib.IMAP4_SSL] = None
         self._lock = asyncio.Lock()
+        
+        # --- VARIABLES POUR LE MODE IDLE ---
+        self.mail_listener: Optional[imaplib.IMAP4_SSL] = None
+        self._listener_lock = asyncio.Lock()
+        self.idle_timeout_seconds = 270  # 4 minutes et 30 secondes (Adapté au pare-feu académique)
 
         logger.debug("Service IMAP initialisé avec la configuration centrale.")
 
@@ -67,15 +74,26 @@ class IMAPService:
             await asyncio.to_thread(self._disconnect_sync)
 
     def _disconnect_sync(self) -> None:
-        """Ferme proprement la connexion IMAP."""
+        """Ferme proprement les connexions IMAP."""
+        # Déconnexion du Worker
         if self.mail:
             try:
                 self.mail.logout()
-                logger.info("Déconnexion IMAP réussie.")
+                logger.info("Déconnexion IMAP (Worker) réussie.")
             except Exception as e:
-                logger.warning(f"Erreur mineure lors de la déconnexion IMAP : {e}")
+                logger.warning(f"Erreur mineure lors de la déconnexion IMAP (Worker) : {e}")
             finally:
                 self.mail = None
+                
+        # Déconnexion du Listener
+        if self.mail_listener:
+            try:
+                self.mail_listener.logout()
+                logger.info("Déconnexion IMAP (Listener) réussie.")
+            except Exception as e:
+                pass
+            finally:
+                self.mail_listener = None
 
     def _ensure_connected(self) -> None:
         """
@@ -533,4 +551,80 @@ class IMAPService:
             
         except Exception as e:
             logger.error(f"Erreur critique lors du marquage des e-mails (ACK) : {e}")
+            return False
+
+    async def wait_for_new_email_idle(self) -> bool:
+        """
+        Point d'entrée asynchrone pour l'écoute permanente (IDLE).
+        Retourne True si un nouveau mail est arrivé, False si c'est juste un Timeout de sécurité.
+        """
+        async with self._listener_lock:
+            return await asyncio.to_thread(self._wait_for_new_email_idle_sync)
+
+    def _wait_for_new_email_idle_sync(self) -> bool:
+        """Logique synchrone de la commande IDLE."""
+        try:
+            # 1. Connexion / Reconnexion du Listener si nécessaire
+            if not self.mail_listener:
+                logger.debug("Connexion du Listener IMAP pour le mode IDLE...")
+                self.mail_listener = imaplib.IMAP4_SSL(self.host, self.port, timeout=15)
+                self.mail_listener.login(self.user, self.password)
+            
+            # 2. Sélection de la boîte de réception en mode lecture seule
+            status, _ = self.mail_listener.select('"INBOX"', readonly=True)
+            if status != 'OK':
+                raise IMAPError("Impossible de sélectionner l'INBOX pour le Listener.")
+
+            # 3. Envoi manuel de la commande IDLE (non supportée nativement par imaplib standard)
+            logger.info("Mode IDLE activé : Le Copilote écoute le réseau en silence...")
+            tag = self.mail_listener._new_tag().decode('utf-8')
+            self.mail_listener.send(f"{tag} IDLE\r\n".encode('utf-8'))
+            
+            # Le serveur répond immédiatement pour dire qu'il a compris (+ idling)
+            self.mail_listener.readline()
+            
+            # 4. Écoute passive du réseau avec timeout
+            # 'select' attend que le socket du serveur envoie de la donnée
+            readable, _, _ = select.select([self.mail_listener.sock], [], [], self.idle_timeout_seconds)
+            
+            nouveau_mail_detecte = False
+            
+            if readable:
+                # Le serveur a rompu le silence ! On lit ce qu'il dit.
+                line = self.mail_listener.readline().decode('utf-8')
+                if "EXISTS" in line.upper() or "RECENT" in line.upper():
+                    nouveau_mail_detecte = True
+                    logger.info("⚡ Alerte IDLE : Mouvement détecté sur la messagerie !")
+            else:
+                # Le délai de 4 minutes 30s est écoulé dans un silence absolu
+                logger.debug("Timeout IDLE de sécurité (4 min 30 s) atteint. Préparation du Ping.")
+
+            # 5. Sortie propre du mode IDLE (Obligatoire pour que le serveur ne plante pas)
+            self.mail_listener.send(b"DONE\r\n")
+            
+            # --- SÉCURITÉ ANTI-BLOCAGE ---
+            # On force le socket à ne pas attendre plus de 5 secondes la réponse du serveur
+            self.mail_listener.sock.settimeout(5.0) 
+            
+            # On lit le reste des réponses du serveur jusqu'à ce qu'il confirme la fin du IDLE
+            while True:
+                resp = self.mail_listener.readline().decode('utf-8')
+                # Si la réponse est vide (EOF) ou contient le tag de fin, on sort de la boucle
+                if not resp or tag in resp: 
+                    break
+                    
+            return nouveau_mail_detecte
+
+        except Exception as e:
+            logger.warning(f"Connexion Listener (IDLE) perdue ou instable : {e}")
+            # En cas d'erreur réseau, on purge la connexion pour forcer une reconnexion au prochain cycle
+            try:
+                self.mail_listener.logout()
+            except Exception:
+                pass
+            self.mail_listener = None
+            
+            # On fait une pause de 5 secondes pour ne pas spammer le serveur en cas de panne globale
+            import time
+            time.sleep(5)
             return False

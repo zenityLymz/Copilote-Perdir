@@ -74,6 +74,34 @@ class PipelineAMails:
             logger.error(f"Erreur critique lors de l'exécution du Pipeline A : {e}", exc_info=True)
 
 
+    async def run_pipeline_idle_mode(self, folder: str = "INBOX", limit: int = 50) -> None:
+        """
+        Mode d'écoute permanente (IDLE) pour le Pipeline A.
+        Utilise la connexion 'Listener' de l'IMAPService pour attendre un e-mail en silence.
+        Dès qu'un mouvement est détecté, utilise la connexion 'Worker' (via run_pipeline)
+        pour télécharger et traiter les e-mails par lots.
+        """
+        logger.info(f"🎧 Pipeline A : Mise en écoute permanente (IDLE) sur le dossier '{folder}'...")
+        
+        try:
+            # 1. On bloque l'exécution ici jusqu'à ce qu'un mail arrive (ou timeout de 14 min)
+            # Cette fonction utilise exclusivement le 'Listener' et son propre verrou
+            mouvement_detecte = await self.imap_service.wait_for_new_email_idle()
+            
+            # 2. Si le Listener a entendu la "sonnette" du serveur...
+            if mouvement_detecte:
+                logger.info("🔔 Pipeline A : Mouvement détecté ! Réveil du Worker pour la relève.")
+                # On lance la relève classique (qui utilise le Worker et gère les rafales d'un coup)
+                await self.run_pipeline(folder=folder, limit=limit)
+            else:
+                # Si False, c'est que le Timeout de sécurité (14 min) a été atteint dans le silence.
+                logger.debug("💤 Pipeline A : Fin du cycle d'écoute (Timeout de sécurité).")
+                
+        except Exception as e:
+            logger.error(f"Erreur inattendue dans le mode IDLE du Pipeline A : {e}", exc_info=True)
+
+
+
     async def _process_single_mail(self, mail: MailObject) -> None:
         """
         Sous-routine traitant le cycle de vie complet d'un unique e-mail entrant.

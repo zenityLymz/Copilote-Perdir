@@ -53,7 +53,7 @@ logger = get_logger("MainApp")
 
 async def run_pipeline_a_loop(pipeline_a: PipelineAMails, interval_seconds: int = 300) -> None:
     """
-    Boucle infinie pour exécuter le Pipeline A (Triage des Mails et Indexation) à intervalles réguliers.
+    Boucle infinie pour exécuter le Pipeline A (Triage des Mails et Indexation) à intervalles réguliers (si mode POLLING sélectionné).
     """
     logger.info("Démarrage de la tâche de fond : Pipeline A (Triage automatique & Indexation des envois).")
     while True:
@@ -73,6 +73,51 @@ async def run_pipeline_a_loop(pipeline_a: PipelineAMails, interval_seconds: int 
         
         # Pause asynchrone non-bloquante
         await asyncio.sleep(interval_seconds)
+
+
+async def run_pipeline_a_idle_loop(pipeline_a: PipelineAMails) -> None:
+    """
+    Boucle infinie pour exécuter le Pipeline A en mode écoute permanente (si mode IDLE sélectionné).
+    """
+    logger.info("Démarrage de la tâche de fond : Pipeline A (Mode IDLE / Écoute permanente).")
+    
+    last_sent_index_time = datetime.now()
+
+    # --- SYNCHRONISATION DE DÉMARRAGE ---
+    logger.info("Synchronisation initiale : recherche des e-mails arrivés pendant que le Copilote était éteint...")
+    try:
+        # On utilise le Worker pour faire une relève classique avant de s'endormir
+        await pipeline_a.run_pipeline(folder="INBOX", limit=50)
+    except Exception as e:
+        logger.error(f"Erreur lors de la synchronisation de démarrage : {e}")
+    # ----------------------------------------------------
+    
+    while True:
+        try:
+            # 1. Écoute permanente. La fonction bloque ici jusqu'à un mouvement ou un timeout de 14min.
+            await pipeline_a.run_pipeline_idle_mode(folder="INBOX", limit=50)
+            
+            # 2. SÉCURITÉ : La parade anti-retardataires
+            # On force une relève classique silencieuse (Polling) au cas où un e-mail 
+            # serait arrivé pile pendant que l'IA travaillait sur la rafale précédente.
+            logger.debug("Vérification silencieuse des éventuels e-mails retardataires...")
+            await pipeline_a.run_pipeline(folder="INBOX", limit=50)
+            
+            # 3. Indexation silencieuse des e-mails envoyés (toutes les ~15 minutes)
+            # Puisque le timeout IDLE est de 14 min, cette condition s'activera naturellement à chaque réveil.
+            now = datetime.now()
+            if (now - last_sent_index_time).total_seconds() > 800:
+                logger.debug("Indexation périodique des e-mails envoyés...")
+                await pipeline_a.index_sent_emails(folder="Sent", limit=50)
+                last_sent_index_time = now
+                
+        except asyncio.CancelledError:
+            logger.info("Arrêt de la boucle IDLE du Pipeline A.")
+            break
+        except Exception as e:
+            logger.error(f"Erreur inattendue dans la boucle IDLE du Pipeline A : {e}", exc_info=True)
+            # Pause de sécurité de 60s en cas de crash réseau sévère pour ne pas spammer le serveur
+            await asyncio.sleep(60)
 
 async def run_pipeline_c_loop(pipeline_c: PipelineCSynthesis, target_hour: int = 18) -> None:
     """
@@ -131,7 +176,6 @@ async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Commande Telegram /finance pour afficher la consommation visuelle du mois en cours."""
     logger.info("Commande /finance demandée par le Perdir.")
     try:
-        from src.core.config import get_settings
         settings = get_settings()
         tracker = get_token_tracker_service()
         now = datetime.now()
@@ -285,11 +329,19 @@ async def main() -> None:
         # 5. Démarrage des tâches asynchrones parallèles
         logger.info("🚀 Lancement des boucles de traitement asynchrones...")
         
+        # --- L'AIGUILLAGE (Le commutateur Polling vs IDLE) ---
+        if settings.IMAP_MODE.lower() == "idle":
+            logger.info("Mode IMAP sélectionné : IDLE (Écoute permanente)")
+            pipeline_a_task = run_pipeline_a_idle_loop(pipeline_a)
+        else:
+            logger.info("Mode IMAP sélectionné : POLLING (Relève par intervalle)")
+            pipeline_a_task = run_pipeline_a_loop(pipeline_a, interval_seconds=180)
+
         # Le rassemblement des tâches dans asyncio.gather assure le fonctionnement en concurrence 100% Async
         await asyncio.gather(
-            telegram_service.start_polling(),                       # Écoute Telegram en Long Polling
-            run_pipeline_a_loop(pipeline_a, interval_seconds=180),  # Relève des mails toutes les 3 minutes
-            run_pipeline_c_loop(pipeline_c, target_hour=18)         # Synthèse programmée à partir de 18h
+            telegram_service.start_polling(),               # Écoute Telegram en Long Polling
+            pipeline_a_task,                                # Relève des mails (Polling OU IDLE)
+            run_pipeline_c_loop(pipeline_c, target_hour=18) # Synthèse programmée à partir de 18h
         )
 
     except KeyboardInterrupt:
