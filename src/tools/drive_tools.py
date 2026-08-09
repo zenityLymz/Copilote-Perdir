@@ -265,6 +265,19 @@ async def generer_brouillon_synthese_hebdo() -> str:
             
         # 3. Appel de l'Agent de Synthèse (Le prompt n'est plus ici !)
         html_content = await synth_agent.generate_hebdo_brouillon(notes_text, memoire_structure)
+
+        # --- Interception du refus de synthèse ---
+        if "AUCUNE_MODIFICATION_REQUISE" in html_content:
+            logger.info("L'Agent de Synthèse a jugé que les notes ne justifiaient pas de création de document.")
+            
+            # On acquitte quand même les messages en RAM pour ne pas les re-analyser la prochaine fois
+            async with pipeline_b._memory_lock:
+                for turn in pipeline_b.chat_history.turns:
+                    turn.est_synthetise = True
+                pipeline_b._save_history()
+                
+            return "L'analyse a bien été effectuée, mais les informations notées ont été jugées sans impact stratégique. Le document \"Mémoire de l'Établissement\" n'a pas besoin d'être mis à jour et aucun fichier inutile n'a été créé."
+        # --------------------------------------------------
             
         # 4. Création du Google Doc via le service
         doc_title = f"Brouillon de Synthèse - {datetime.now().strftime('%d/%m/%Y')}"

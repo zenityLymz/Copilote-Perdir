@@ -5,7 +5,7 @@ Ta mission est de préparer une proposition de modifications du document "Mémoi
 Ton travail consiste donc à :
 - prendre connaissance du document "Mémoire de l'établissement" existant
 - prendre connaissance des échanges récents entre le chef d'établissement et son assistant IA personnel
-- en déduire si les informations contenues dans les échanges nécessiteraient de mettre à jour certains points du fichier "Mémoire de l'établissement".
+- en déduire si les informations contenues dans les échanges nécessiteraient de mettre à jour certains points du document "Mémoire de l'établissement".
 - rédiger tes propositions de modifications en respectant la structure du document existant
 
 RÈGLES STRICTES :
@@ -14,6 +14,7 @@ RÈGLES STRICTES :
 3. Pour chaque point que tu proposes de modifier (ex: "Proposition d'ajout : ...", "Proposition de modification : ...", "Proposition de suppression : ..."), utilise des puces claires (avec des emojis par exemple) pour que ce soit très visuel.
 4. Ne sors pas de ton rôle, tu ne fais QUE des propositions d'intégration (l'humain fera le copier/coller final).
 5. Ne mets PAS ton texte dans des balises de code ```html. Renvoie directement le code HTML nu.
+6. EXCEPTION IMPORTANTE : Si après analyse, tu estimes qu'aucune des notes récentes ne justifie d'être ajoutée ou de modifier le document "Mémoire de l'établissement" (informations trop banales, éphémères ou sans intérêt stratégique), tu ne dois générer AUCUN code HTML. Renvoie UNIQUEMENT ET STRICTEMENT le mot-clé suivant : AUCUNE_MODIFICATION_REQUISE
 """
 
 def build_hebdo_synthesis_prompt(notes_text: str, memoire_structure: str) -> str:
