@@ -9,4 +9,3 @@ l'interaction entre les services (IMAP, Drive, Telegram) et les agents IA.
 
 from .pipeline_a_mails import PipelineAMails
 from .pipeline_b_telegram import PipelineBTelegram
-from .pipeline_c_synthesis import PipelineCSynthesis

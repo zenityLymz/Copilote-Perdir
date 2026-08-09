@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY_PAID: str      # Clé liée au projet Google Cloud AVEC facturation
     GEMINI_FLASH_LITE_MODEL: str = "gemini-3.5-flash-lite"
     GEMINI_FLASH_MODEL: str = "gemini-3.5-flash"
-    GEMINI_PRO_MODEL: str = "gemini-3.5-pro"#Mettre pro quand on aura activé l'API payante
+    GEMINI_PRO_MODEL: str = "gemini-2.5-pro"#Mettre pro quand on aura activé l'API payante
 
     # --- Assignation des modèles par fonction ---
     # Valeurs acceptées : "flash-lite", "flash", "pro"
@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     MODEL_SYNTHESIS_SUMMARY: str = "flash-lite"    # Résumé Telegram de fin de journée
     MODEL_ORCHESTRATOR: str = "flash"              # ATTENTION: Nécessite "flash" pour bien utiliser les Outils
     MODEL_SYNTHESIS_DOC: str = "flash"             # ATTENTION: Nécessite "flash" ou "pro" pour gérer le HTML
+
+
+    # --- Paramètres de la Synthèse et de l'Historique ---
+    CHAT_HISTORY_RETENTION_DAYS: int = 10
+    AUTO_SYNTHESIS_DAY: int = 4  # 0=Lundi, 4=Vendredi, 6=Dimanche
+    AUTO_SYNTHESIS_HOUR: int = 14
 
 
     # --- Temps de pause entre les appels à l'API Gemini pour éviter le throttling ---
@@ -60,9 +66,6 @@ class Settings(BaseSettings):
     # --- Configuration ChromaDB ---
     CHROMA_PERSIST_DIR: str = "data/chroma_db"
     EMBEDDING_MODEL_NAME: str = "gemini-embedding-001"
-
-    # --- Nombre de jours de mémoire à conserver pour le contexte conversationnel ---
-    CHAT_HISTORY_DAYS: int = 7
 
     # Comportement de Pydantic pour lire le fichier .env
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

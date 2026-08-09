@@ -191,7 +191,7 @@ class PipelineBTelegram:
             self.history_file_path.parent.mkdir(parents=True, exist_ok=True)
             
             # Nettoyage de la mémoire glissante avant sauvegarde
-            self._purge_old_history(days=get_settings().CHAT_HISTORY_DAYS)
+            self._purge_old_history(days=get_settings().CHAT_HISTORY_RETENTION_DAYS)
             
             # Génération du JSON via Pydantic et écriture dans le fichier
             json_data = self.chat_history.model_dump_json(indent=2)

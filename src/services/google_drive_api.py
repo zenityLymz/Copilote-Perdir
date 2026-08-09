@@ -189,40 +189,6 @@ class GoogleDriveService:
             logger.error(f"Erreur de téléchargement pour le fichier {file_id} : {e}")
             raise GoogleAPIError(f"Téléchargement Drive échoué : {e}")
 
-    async def update_file_content(self, file_id: str, new_content: str) -> bool:
-        """
-        Écrase intégralement le contenu d'un fichier existant sur Drive avec de nouvelles données.
-        Sert à l'étape 'Replace' après le travail de l'agent de synthèse.
-        """
-        async with self._lock:
-            return await asyncio.to_thread(self._update_file_content_sync, file_id, new_content)
-
-    def _update_file_content_sync(self, file_id: str, new_content: str) -> bool:
-        if not self.service:
-            raise GoogleAPIError("Service Drive non authentifié.")
-
-        logger.debug(f"Mise à jour du fichier ID {file_id}...")
-        try:
-            # Création du flux binaire avec le mimetype HTML natif
-            media_body = MediaIoBaseUpload(
-                io.BytesIO(new_content.encode('utf-8')), 
-                mimetype='text/html', 
-                resumable=True
-            )
-            
-            # Appel à l'API pour mettre à jour
-            self.service.files().update(
-                fileId=file_id,
-                media_body=media_body
-            ).execute()
-            
-            logger.info(f"Fichier Google Doc {file_id} écrasé et mis à jour avec succès.")
-            return True
-        except Exception as e:
-            logger.error(f"Erreur lors de la mise à jour du fichier {file_id} : {e}")
-            raise GoogleAPIError(f"Mise à jour Drive échouée : {e}")
-
-
 
     async def search_files_by_content(self, query_string: str, limit: int = 3) -> List[Dict[str, Any]]:
         """
@@ -287,32 +253,75 @@ class GoogleDriveService:
             logger.error(f"Erreur d'extraction de texte pour {file_id} : {e}")
             raise GoogleAPIError(f"Extraction de texte échouée : {e}")
 
-    async def export_google_doc_as_html(self, file_id: str) -> str:
+
+    async def create_google_doc(self, title: str, html_content: str, parent_id: Optional[str] = None) -> Dict[str, str]:
         """
-        Exporte un document Google Docs natif au format HTML brut.
-        Sert à la nouvelle étape 'Read' de la mécanique Read-Rewrite-Replace pour la Mémoire.
+        Crée un document Google Docs formaté à partir de code HTML.
         """
         async with self._lock:
-            return await asyncio.to_thread(self._export_google_doc_as_html_sync, file_id)
+            return await asyncio.to_thread(self._create_google_doc_sync, title, html_content, parent_id)
 
-    def _export_google_doc_as_html_sync(self, file_id: str) -> str:
+    def _create_google_doc_sync(self, title: str, html_content: str, parent_id: Optional[str] = None) -> Dict[str, str]:
+        if not self.service:
+            raise GoogleAPIError("Service Drive non authentifié.")
+        
+        try:
+            logger.debug(f"Création du Google Doc '{title}'...")
+            file_metadata = {
+                'name': title,
+                'mimeType': 'application/vnd.google-apps.document'
+            }
+            if parent_id:
+                file_metadata['parents'] = [parent_id]
+                
+            # C'est ici que la magie opère : Drive convertit automatiquement le HTML en Docs
+            media_body = MediaIoBaseUpload(
+                io.BytesIO(html_content.encode('utf-8')), 
+                mimetype='text/html', 
+                resumable=True
+            )
+            
+            file = self.service.files().create(
+                body=file_metadata,
+                media_body=media_body,
+                fields='id, webViewLink'
+            ).execute()
+            
+            logger.info(f"Document '{title}' créé avec succès (ID: {file.get('id')}).")
+            return {"id": file.get('id'), "link": file.get('webViewLink')}
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la création du Google Doc : {e}")
+            raise GoogleAPIError(f"Création de document échouée : {e}")
+
+
+    async def update_file_content(self, file_id: str, new_content: str) -> bool:
+        """
+        Écrase intégralement le contenu d'un fichier existant sur Drive avec de nouvelles données (utilisé pour la main courante).
+        """
+        async with self._lock:
+            return await asyncio.to_thread(self._update_file_content_sync, file_id, new_content)
+
+    def _update_file_content_sync(self, file_id: str, new_content: str) -> bool:
         if not self.service:
             raise GoogleAPIError("Service Drive non authentifié.")
 
-        logger.debug(f"Export HTML du Google Doc ID {file_id}...")
+        logger.debug(f"Mise à jour du fichier ID {file_id}...")
         try:
-            # On utilise export_media avec le mimeType text/html (Spécifique aux Google Docs)
-            request = self.service.files().export_media(fileId=file_id, mimeType='text/html')
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request)
+            media_body = MediaIoBaseUpload(
+                io.BytesIO(new_content.encode('utf-8')), 
+                mimetype='text/plain', 
+                resumable=True
+            )
             
-            done = False
-            while done is False:
-                status, done = downloader.next_chunk()
-                
-            content = fh.getvalue().decode('utf-8')
-            logger.info(f"Contenu HTML du Google Doc {file_id} exporté avec succès.")
-            return content
+            # Appel à l'API pour mettre à jour
+            self.service.files().update(
+                fileId=file_id,
+                media_body=media_body
+            ).execute()
+            
+            logger.info(f"Fichier {file_id} écrasé et mis à jour avec succès.")
+            return True
         except Exception as e:
-            logger.error(f"Erreur d'export HTML pour le document {file_id} : {e}")
-            raise GoogleAPIError(f"Export HTML Drive échoué : {e}")
+            logger.error(f"Erreur lors de la mise à jour du fichier {file_id} : {e}")
+            raise GoogleAPIError(f"Mise à jour Drive échouée : {e}")

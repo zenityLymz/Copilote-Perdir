@@ -19,7 +19,8 @@ from .drive_tools import (
     preparer_brouillon_main_courante,
     sauvegarder_main_courante_validee,
     rechercher_info_drive,
-    lire_memoire_etablissement
+    lire_memoire_etablissement,
+    generer_brouillon_synthese_hebdo
 )
 
 # --- Outils d'Agenda et de Planification (Google Calendar / Tasks) ---

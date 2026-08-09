@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from src.services.telegram_bot import TelegramBotService
     from src.services.token_tracker import TokenTrackerService
     from src.services.gemini_router import GeminiRouterService
+    from src.workflows.pipeline_b_telegram import PipelineBTelegram
 
 # L'astuce est de mettre le nom du type entre guillemets ('IMAPService') 
 # car la classe n'est pas "réellement" importée à l'exécution.
@@ -27,6 +28,7 @@ _drive_service: Optional['GoogleDriveService'] = None
 _telegram_service: Optional['TelegramBotService'] = None
 _token_tracker_service: Optional['TokenTrackerService'] = None
 _gemini_router_service: Optional['GeminiRouterService'] = None
+_pipeline_b: Optional['PipelineBTelegram'] = None
 
 # --- Service IMAP ---
 def get_imap_service() -> IMAPService:
@@ -85,3 +87,12 @@ def get_gemini_router_service() -> GeminiRouterService:
 def set_gemini_router_service(service: GeminiRouterService) -> None:
     global _gemini_router_service
     _gemini_router_service = service
+
+def get_pipeline_b() -> 'PipelineBTelegram':
+    if _pipeline_b is None:
+        raise RuntimeError("Le Pipeline B n'a pas été initialisé dans le registre.")
+    return _pipeline_b
+
+def set_pipeline_b(pipeline: 'PipelineBTelegram') -> None:
+    global _pipeline_b
+    _pipeline_b = pipeline

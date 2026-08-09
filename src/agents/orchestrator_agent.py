@@ -26,7 +26,8 @@ from src.tools import (
     lire_memoire_etablissement,
     rechercher_dans_les_emails, 
     enregistrer_brouillon_mail, 
-    generer_briefing_emails
+    generer_briefing_emails,
+    generer_brouillon_synthese_hebdo
 )
 
 # Initialisation du logger pour ce module
@@ -70,7 +71,8 @@ class OrchestratorAgent:
             lire_memoire_etablissement,
             rechercher_dans_les_emails,
             enregistrer_brouillon_mail,
-            generer_briefing_emails
+            generer_briefing_emails,
+            generer_brouillon_synthese_hebdo
         ]
 
     def _format_chat_history(self, chat_history: ChatHistory) -> List[types.Content]:

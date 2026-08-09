@@ -217,3 +217,72 @@ async def lire_memoire_etablissement() -> str:
     except Exception as e:
         logger.error(f"Erreur lors de la lecture directe de la mémoire : {e}")
         return "Erreur technique : Impossible d'accéder au fichier Mémoire de l'Établissement."
+
+
+async def generer_brouillon_synthese_hebdo() -> str:
+    """
+    Génère un brouillon de synthèse hebdomadaire sous forme de Google Doc, en regroupant 
+    tous les échanges récents non synthétisés.
+    ATTENTION POUR LE COPILOTE : Utilise cet outil UNIQUEMENT quand le chef d'établissement 
+    demande de préparer la synthèse du document "Mémoire de l'établissement".
+    Dans ce cas là, aucun autre outil n'est nécessaire (ne recherche pas dans le drive, ni dans les mails ou autre).
+    """
+    from src.utils import get_logger, truncate_text_for_llm
+    logger = get_logger(__name__)
+    logger.info("Outil 'generer_brouillon_synthese_hebdo' appelé.")
+    
+    try:
+        from src.core.config import get_settings
+        from src.core.dependencies import get_drive_service, get_pipeline_b
+        from src.agents.synth_agent import SynthAgent
+        from datetime import datetime
+        
+        settings = get_settings()
+        drive_service = get_drive_service()
+        pipeline_b = get_pipeline_b()
+        synth_agent = SynthAgent()  # Instanciation propre de l'Agent
+        
+        # 1. Collecte des notes en RAM
+        notes = []
+        async with pipeline_b._memory_lock:
+            for turn in pipeline_b.chat_history.turns:
+                if not turn.est_synthetise:
+                    role = "Perdir" if turn.role == "user" else "Copilote IA"
+                    ts = turn.timestamp.strftime("%d/%m %H:%M")
+                    notes.append(f"[{ts}] {role} : {turn.message}")
+                    
+        if not notes:
+            return "Il n'y a aucune nouvelle information ou note à synthétiser depuis la dernière fois."
+            
+        notes_text = "\n".join(notes)
+        
+        # 2. Récupération structure du fichier maître
+        try:
+            memoire_structure = await drive_service.get_file_text_content(settings.MEMOIRE_FILE_ID, 'application/vnd.google-apps.document')
+            memoire_structure = truncate_text_for_llm(memoire_structure, max_tokens=1500)
+        except Exception:
+            memoire_structure = "(Structure non disponible)"
+            
+        # 3. Appel de l'Agent de Synthèse (Le prompt n'est plus ici !)
+        html_content = await synth_agent.generate_hebdo_brouillon(notes_text, memoire_structure)
+            
+        # 4. Création du Google Doc via le service
+        doc_title = f"Brouillon de Synthèse - {datetime.now().strftime('%d/%m/%Y')}"
+        doc_info = await drive_service.create_google_doc(title=doc_title, html_content=html_content)
+        
+        # 5. Acquittement des messages en RAM
+        async with pipeline_b._memory_lock:
+            for turn in pipeline_b.chat_history.turns:
+                turn.est_synthetise = True
+            pipeline_b._save_history()
+            
+        return (
+            f"✅ Le brouillon de synthèse a été créé avec succès !\n\n"
+            f"<b>Titre :</b> {doc_title}\n"
+            f"<b>Lien :</b> {doc_info['link']}\n\n"
+            f"Vous pouvez cliquer sur le lien, copier ce qui vous intéresse, et le coller dans votre fichier maître."
+        )
+        
+    except Exception as e:
+        logger.error(f"Erreur lors de la création du brouillon de synthèse : {e}", exc_info=True)
+        return "Erreur technique lors de la création du brouillon de synthèse."

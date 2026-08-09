@@ -34,13 +34,11 @@ from src.services import (
 )
 from src.agents import (
     TriageAgent,
-    OrchestratorAgent,
-    SynthAgent
+    OrchestratorAgent
 )
 from src.workflows import (
     PipelineAMails,
     PipelineBTelegram,
-    PipelineCSynthesis
 )
 
 from telegram import Update
@@ -119,58 +117,6 @@ async def run_pipeline_a_idle_loop(pipeline_a: PipelineAMails) -> None:
             # Pause de sécurité de 60s en cas de crash réseau sévère pour ne pas spammer le serveur
             await asyncio.sleep(60)
 
-async def run_pipeline_c_loop(pipeline_c: PipelineCSynthesis, target_hour: int = 18) -> None:
-    """
-    Boucle infinie pour exécuter le Pipeline C (Synthèse Stratégique) une fois par jour.
-    Persiste la date de dernière exécution sur le disque pour survivre aux coupures de courant.
-    """
-    logger.info(f"Démarrage de la tâche de fond : Pipeline C (Synthèse programmée à partir de {target_hour:02d}h00).")
-    
-    # Fichier d'état physique stocké dans le dossier data
-    state_file = Path("data/last_synthesis.txt")
-    last_run_date_str = None
-
-    # Au démarrage, on essaie de lire la date de la dernière synthèse réussie
-    if state_file.exists():
-        try:
-            last_run_date_str = state_file.read_text(encoding="utf-8").strip()
-            logger.info(f"État restauré : dernière synthèse effectuée le {last_run_date_str}.")
-        except Exception as e:
-            logger.warning(f"Impossible de lire le fichier d'état de synthèse : {e}")
-
-    while True:
-        try:
-            now = datetime.now()
-            # On utilise le format ISO (YYYY-MM-DD) qui est parfait pour les comparaisons sous forme de chaîne de caractères
-            current_date_str = now.date().isoformat()
-            
-            # Condition : Il est 18h ou plus ET la synthèse n'a pas encore été faite aujourd'hui
-            if now.hour >= target_hour and last_run_date_str != current_date_str:
-                logger.info(f"Fenêtre de synthèse atteinte (Il est {now.hour}h{now.minute:02d}). Déclenchement du Pipeline C.")
-                
-                # Exécution du pipeline
-                await pipeline_c.run_pipeline()
-                
-                # Si le pipeline ne crashe pas, on valide l'exécution pour aujourd'hui
-                last_run_date_str = current_date_str
-                
-                # Sauvegarde physique sur la carte SD du Raspberry
-                try:
-                    state_file.write_text(last_run_date_str, encoding="utf-8")
-                    logger.info(f"Synthèse du {current_date_str} validée et sauvegardée sur le disque.")
-                except Exception as e:
-                    logger.error(f"Erreur lors de l'écriture du fichier d'état de synthèse : {e}")
-                
-            # Vérification toutes les 5 minutes
-            await asyncio.sleep(300)
-                
-        except asyncio.CancelledError:
-            logger.info("Arrêt de la boucle du Pipeline C.")
-            break
-        except Exception as e:
-            logger.error(f"Erreur inattendue dans la boucle du Pipeline C : {e}", exc_info=True)
-            # En cas d'erreur de l'API Gemini, on attend 5 minutes avant la prochaine tentative
-            await asyncio.sleep(300)
 
 async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Commande Telegram /finance pour afficher la consommation visuelle du mois en cours."""
@@ -244,6 +190,91 @@ async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.error(f"Erreur dans la commande /finance : {e}", exc_info=True)
         await update.message.reply_text("⚠️ Erreur technique lors de la récupération des données financières.")
 
+
+async def synthese_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Déclenchée par /synthese.
+    Demande directement à l'Orchestrateur de préparer la synthèse sans polluer l'historique.
+    """
+    logger.info("Commande /synthese déclenchée par l'utilisateur.")
+    
+    # On affiche "Le bot tape..." pour montrer que c'est pris en compte
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+    
+    try:
+        # On récupère le Pipeline B depuis notre registre
+        from src.core.dependencies import get_pipeline_b
+        pipeline_b = get_pipeline_b()
+        
+        # Le "chuchotement" : C'est CE texte précis que l'Orchestrateur va lire et analyser !
+        hidden_prompt = "Prépare la synthèse de la semain. Pour cela, utilise exclusivement ton outil `generer_brouillon_synthese_hebdo`."
+        
+        # On parle directement au cerveau de l'IA (l'Orchestrateur)
+        reponse = await pipeline_b.orchestrator_agent.process_user_request(
+            user_message=hidden_prompt,
+            chat_history=pipeline_b.chat_history
+        )
+        
+        # On renvoie la réponse au Perdir (le lien du Google Doc généré par l'outil)
+        await update.message.reply_text(reponse, parse_mode="HTML", disable_web_page_preview=True)
+        
+    except Exception as e:
+        logger.error(f"Erreur lors de la commande /synthese : {e}", exc_info=True)
+        await update.message.reply_text("⚠️ Erreur technique lors de la création du brouillon.")
+
+
+async def run_auto_synthesis_loop(telegram_service: TelegramBotService, pipeline_b: PipelineBTelegram) -> None:
+    """
+    Boucle de fond surveillant le jour et l'heure pour déclencher 
+    la création automatique du brouillon de synthèse hebdomadaire.
+    """
+    settings = get_settings()
+    logger.info(f"Démarrage de la tâche de fond : Synthèse Auto (Jour {settings.AUTO_SYNTHESIS_DAY}, {settings.AUTO_SYNTHESIS_HOUR}h00).")
+    
+    # On mémorise la date du dernier lancement pour ne pas le faire 50 fois le même jour
+    last_run_date = None
+
+    while True:
+        try:
+            now = datetime.now()
+            
+            # Vérification : Est-ce le bon jour (ex: 4=Vendredi) ET la bonne heure (ex: >= 18h) ?
+            if now.weekday() == settings.AUTO_SYNTHESIS_DAY and now.hour >= settings.AUTO_SYNTHESIS_HOUR:
+                
+                # Vérification : Ne l'a-t-on pas déjà fait aujourd'hui ?
+                if last_run_date != now.date():
+                    logger.info("⏰ Condition de synthèse hebdomadaire remplie. Déclenchement automatique.")
+                    
+                    # Le "chuchotement" système
+                    hidden_prompt = "Commande système : Je veux que tu prépares le brouillon de la synthèse de la semaine maintenant."
+                    
+                    # On fait travailler l'Orchestrateur
+                    reponse = await pipeline_b.orchestrator_agent.process_user_request(
+                        user_message=hidden_prompt,
+                        chat_history=pipeline_b.chat_history
+                    )
+                    
+                    # On envoie le message PROACTIVEMENT au Perdir sur Telegram
+                    await telegram_service.send_message(
+                        chat_id=settings.TELEGRAM_ALLOWED_USER_ID,
+                        text=f"🔔 <b>Synthèse Hebdomadaire Automatique</b>\n\n{reponse}",
+                        parse_mode="HTML",
+                        disable_web_page_preview=True
+                    )
+                    
+                    # On valide que c'est fait pour aujourd'hui
+                    last_run_date = now.date()
+                    logger.info("Synthèse automatique envoyée avec succès sur Telegram.")
+
+        except asyncio.CancelledError:
+            logger.info("Arrêt de la boucle de synthèse automatique.")
+            break
+        except Exception as e:
+            logger.error(f"Erreur dans la boucle de synthèse automatique : {e}", exc_info=True)
+        
+        # Le système s'endort et vérifie l'heure toutes les 5 minutes
+        await asyncio.sleep(300)
+
 async def main() -> None:
     """
     Fonction principale asynchrone orchestrant l'initialisation et le lancement des pipelines.
@@ -291,7 +322,6 @@ async def main() -> None:
         logger.info("Initialisation des cerveaux IA...")
         triage_agent = TriageAgent()
         orchestrator_agent = OrchestratorAgent()
-        synth_agent = SynthAgent()
 
         # 4. Instanciation des Pipelines
         logger.info("Câblage des Pipelines d'exécution...")
@@ -310,21 +340,18 @@ async def main() -> None:
             orchestrator_agent=orchestrator_agent
         )
 
+        from src.core.dependencies import set_pipeline_b
+        set_pipeline_b(pipeline_b)
+
         # Enregistrement de la commande /finance pour le Perdir
         telegram_service.register_command("finance", finance_command)
+
+        # Enregistrement de la commande /synthese pour le Perdir
+        telegram_service.register_command("synthese", synthese_command)
 
         # Raccordement du gestionnaire de messages naturels Telegram vers le Pipeline B
         telegram_service.register_message_handler(pipeline_b.process_telegram_message)
 
-        # - Pipeline C (Différé - Synthèse Stratégique)
-        pipeline_c = PipelineCSynthesis(
-            drive_service=drive_service,
-            telegram_service=telegram_service,
-            imap_service=imap_service,
-            synth_agent=synth_agent,
-            memoire_file_id=settings.MEMOIRE_FILE_ID,
-            pipeline_b=pipeline_b
-        )
 
         # 5. Démarrage des tâches asynchrones parallèles
         logger.info("🚀 Lancement des boucles de traitement asynchrones...")
@@ -337,11 +364,14 @@ async def main() -> None:
             logger.info("Mode IMAP sélectionné : POLLING (Relève par intervalle)")
             pipeline_a_task = run_pipeline_a_loop(pipeline_a, interval_seconds=180)
 
+        # --- Préparation de la tâche de synthèse automatique ---
+        auto_synth_task = run_auto_synthesis_loop(telegram_service, pipeline_b)
+
         # Le rassemblement des tâches dans asyncio.gather assure le fonctionnement en concurrence 100% Async
         await asyncio.gather(
             telegram_service.start_polling(),               # Écoute Telegram en Long Polling
             pipeline_a_task,                                # Relève des mails (Polling OU IDLE)
-            run_pipeline_c_loop(pipeline_c, target_hour=18) # Synthèse programmée à partir de 18h
+            auto_synth_task                                 # Synthèse automatique programmée
         )
 
     except KeyboardInterrupt:
