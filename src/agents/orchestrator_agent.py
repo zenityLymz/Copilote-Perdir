@@ -75,7 +75,7 @@ class OrchestratorAgent:
             generer_brouillon_synthese_hebdo
         ]
 
-    def _format_chat_history(self, chat_history: ChatHistory) -> List[types.Content]:
+    def _format_chat_history(self, chat_history: ChatHistory, current_user_message: str) -> List[types.Content]:
         """
         Convertit l'historique conversationnel local (Pydantic) au format 
         attendu par le SDK google-genai pour maintenir le contexte.
@@ -87,13 +87,27 @@ class OrchestratorAgent:
             List[types.Content]: La liste formatée pour l'API Gemini.
         """
         formatted_history = []
-        for turn in chat_history.turns:
-            # Le SDK exige que le rôle soit 'user' ou 'model'
+        turns_to_process = chat_history.turns
+        
+        # SÉCURITÉ ANTI-DOUBLON :
+        # Le Pipeline B enregistre le message en RAM avant d'appeler l'IA.
+        # Si on laisse ce dernier message dans l'historique ET qu'on l'envoie 
+        # "en direct" via send_message, l'IA le lira en double !
+        if turns_to_process and turns_to_process[-1].message == current_user_message:
+            turns_to_process = turns_to_process[:-1]
+
+        for turn in turns_to_process:
             role = turn.role if turn.role in ["user", "model"] else "user"
+            
+            # --- INJECTION DE L'HORODATAGE ICI ---
+            # Donne la notion du temps à l'IA pour chaque message !
+            timestamp_str = turn.timestamp.strftime("%d/%m/%Y à %H:%M")
+            message_avec_temps = f"[{timestamp_str}] {turn.message}"
+            
             formatted_history.append(
                 types.Content(
                     role=role,
-                    parts=[types.Part.from_text(text=turn.message)]
+                    parts=[types.Part.from_text(text=message_avec_temps)]
                 )
             )
         return formatted_history
@@ -143,7 +157,7 @@ class OrchestratorAgent:
             enriched_user_prompt = build_orchestrator_prompt(
                 user_message=user_message
             )
-            formatted_history = self._format_chat_history(chat_history)
+            formatted_history = self._format_chat_history(chat_history, user_message)
 
             settings = get_settings()
             

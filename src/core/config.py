@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     # --- Fichiers Drive (Markdown) ---
     MEMOIRE_FILE_ID: str
     MAIN_COURANTE_FILE_ID: str
+    SYNTHESIS_FOLDER_ID: Optional[str] = None
 
     # --- Configuration ChromaDB ---
     CHROMA_PERSIST_DIR: str = "data/chroma_db"

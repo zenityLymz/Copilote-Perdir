@@ -268,7 +268,13 @@ async def generer_brouillon_synthese_hebdo() -> str:
             
         # 4. Création du Google Doc via le service
         doc_title = f"Brouillon de Synthèse - {datetime.now().strftime('%d/%m/%Y')}"
-        doc_info = await drive_service.create_google_doc(title=doc_title, html_content=html_content)
+        parent_folder = getattr(settings, 'SYNTHESIS_FOLDER_ID', None)
+        
+        doc_info = await drive_service.create_google_doc(
+            title=doc_title, 
+            html_content=html_content,
+            parent_id=parent_folder # On envoie le fichier dans le bon dossier
+        )
         
         # 5. Acquittement des messages en RAM
         async with pipeline_b._memory_lock:

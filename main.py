@@ -385,6 +385,7 @@ async def main() -> None:
         except Exception:
             pass
         logger.info("Arrêt complet du Copilote.")
+        os._exit(0)
 
 
 if __name__ == "__main__":

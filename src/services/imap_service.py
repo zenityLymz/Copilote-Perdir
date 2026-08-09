@@ -6,6 +6,7 @@ from email import policy
 import email.utils
 from datetime import datetime
 from typing import List, Optional
+import re
 
 from src.core.models import MailObject, TriDecision
 from src.core.exceptions import IMAPError
@@ -289,7 +290,6 @@ class IMAPService:
         Logique synchrone optimisée avec BATCH FETCHING DYNAMIQUE.
         Parcourt tous les dossiers de l'arborescence et télécharge par lots.
         """
-        import re
 
         self._ensure_connected()
         logger.info("Récupération de la liste de tous les dossiers IMAP (Scan complet)...")

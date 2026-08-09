@@ -12,9 +12,8 @@ from .triage_prompts import (
     build_mail_evaluation_prompt
 )
 from .synth_prompts import (
-    get_pilotage_system_prompt,
-    build_pilotage_update_prompt,
-    build_summary_prompt
+    get_hebdo_synthesis_system_prompt,
+    build_hebdo_synthesis_prompt
 )
 from .briefing_prompts import (
     get_briefing_system_prompt,

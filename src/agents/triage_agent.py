@@ -7,6 +7,7 @@ from src.core.exceptions import AgentError
 from src.prompts.triage_prompts import get_triage_system_prompt, build_mail_evaluation_prompt
 from src.utils.logger import get_logger
 from src.core.dependencies import get_gemini_router_service
+from src.core.config import get_settings
 
 # Initialisation du logger pour ce module
 logger = get_logger(__name__)
@@ -50,6 +51,7 @@ class TriageAgent:
             system_prompt = get_triage_system_prompt()
             user_prompt = build_mail_evaluation_prompt(mail)
 
+            settings = get_settings()
             # 2. Appel à l'API Gemini via notre routeur central (Gestion 429 et Tracker)
             response = await self.router.generate_content(
                 model_tier=settings.MODEL_TRIAGE_EMAILS,
