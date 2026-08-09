@@ -40,8 +40,8 @@ class Settings(BaseSettings):
 
     # --- Paramètres de la Synthèse et de l'Historique ---
     CHAT_HISTORY_RETENTION_DAYS: int = 10
-    AUTO_SYNTHESIS_DAY: int = 4  # 0=Lundi, 4=Vendredi, 6=Dimanche
-    AUTO_SYNTHESIS_HOUR: int = 14
+    AUTO_SYNTHESIS_DAY: int = 6  # 0=Lundi, 4=Vendredi, 6=Dimanche
+    AUTO_SYNTHESIS_HOUR: int = 13
 
 
     # --- Temps de pause entre les appels à l'API Gemini pour éviter le throttling ---

@@ -58,10 +58,11 @@ class TelegramBotService:
             logger.error(f"Erreur fatale lors du démarrage du Long Polling: {e}")
             raise TelegramBotError(f"Impossible de démarrer le Long Polling : {e}")
 
-    async def send_notification(self, message: str) -> bool:
+    async def send_notification(self, message: str, **kwargs) -> bool:
         """
         Envoie une notification push ou une alerte au chef d'établissement.
         Utilisé notamment pour les e-mails classés "URGENT" par l'agent de triage.
+        Accepte des arguments supplémentaires (kwargs) supportés par l'API Telegram.
 
         Args:
             message (str): Le contenu de l'alerte à envoyer.
@@ -72,12 +73,19 @@ class TelegramBotService:
         logger.debug("Tentative d'envoi d'une notification Telegram...")
         try:
             # On utilise bot.send_message pour envoyer directement à l'ID autorisé
-            await self.app.bot.send_message(chat_id=self._allowed_user_id, text=message, parse_mode=ParseMode.HTML)
+            await self.app.bot.send_message(
+                chat_id=self._allowed_user_id, 
+                text=message, 
+                parse_mode=ParseMode.HTML,
+                **kwargs # <-- L'injection se fait discrètement ici
+            )
             logger.info("Notification Telegram envoyée avec succès.")
             return True
+            
         except TelegramError as e:
             logger.error(f"Échec de l'envoi de la notification Telegram: {e}")
             return False
+            
         except Exception as e:
             logger.error(f"Erreur inattendue lors de l'envoi de la notification: {e}")
             return False

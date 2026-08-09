@@ -207,7 +207,7 @@ async def synthese_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         pipeline_b = get_pipeline_b()
         
         # Le "chuchotement" : C'est CE texte précis que l'Orchestrateur va lire et analyser !
-        hidden_prompt = "Prépare la synthèse de la semain. Pour cela, utilise exclusivement ton outil `generer_brouillon_synthese_hebdo`."
+        hidden_prompt = "Prépare la synthèse de la semaine. Pour cela, utilise exclusivement ton outil `generer_brouillon_synthese_hebdo`."
         
         # On parle directement au cerveau de l'IA (l'Orchestrateur)
         reponse = await pipeline_b.orchestrator_agent.process_user_request(
@@ -246,7 +246,7 @@ async def run_auto_synthesis_loop(telegram_service: TelegramBotService, pipeline
                     logger.info("⏰ Condition de synthèse hebdomadaire remplie. Déclenchement automatique.")
                     
                     # Le "chuchotement" système
-                    hidden_prompt = "Commande système : Je veux que tu prépares le brouillon de la synthèse de la semaine maintenant."
+                    hidden_prompt = "Prépare la synthèse de la semaine. Pour cela, utilise exclusivement ton outil `generer_brouillon_synthese_hebdo`."
                     
                     # On fait travailler l'Orchestrateur
                     reponse = await pipeline_b.orchestrator_agent.process_user_request(
@@ -255,10 +255,8 @@ async def run_auto_synthesis_loop(telegram_service: TelegramBotService, pipeline
                     )
                     
                     # On envoie le message PROACTIVEMENT au Perdir sur Telegram
-                    await telegram_service.send_message(
-                        chat_id=settings.TELEGRAM_ALLOWED_USER_ID,
-                        text=f"🔔 <b>Synthèse Hebdomadaire Automatique</b>\n\n{reponse}",
-                        parse_mode="HTML",
+                    await telegram_service.send_notification(
+                        message=f"🔔 <b>Synthèse Hebdomadaire Automatique</b>\n\n{reponse}",
                         disable_web_page_preview=True
                     )
                     
