@@ -305,7 +305,7 @@ class IMAPService:
                 
                 # --- SÉCURITÉ : Ignorer la corbeille et les spams ---
                 # On exclut les dossiers "poubelle" pour ne pas résumer les indésirables
-                if "trash" in folder_str.lower() or "corbeille" in folder_str.lower() or "deleted" in folder_str.lower() or "spam" in folder_str.lower() or "junk" in folder_str.lower():
+                if "trash" in folder_str.lower() or "corbeille" in folder_str.lower() or "deleted" in folder_str.lower() or "spam" in folder_str.lower() or "junk" in folder_str.lower() or "drafts" in folder_str.lower() or "brouillons" in folder_str.lower() or "draft" in folder_str.lower():
                     continue
 
                 # 2. Extraction propre du nom du dossier
