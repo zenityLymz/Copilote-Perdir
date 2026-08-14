@@ -1,6 +1,9 @@
 from src.core import MailObject
 import json
 from pathlib import Path
+from utils import get_logger
+
+logger = get_logger(__name__)
 
 def get_triage_system_prompt() -> str:
     """
