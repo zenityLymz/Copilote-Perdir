@@ -29,3 +29,6 @@ from .calendar_tools import (
     gerer_taches,
     programmer_alerte
 )
+
+# --- Outils de triage ---
+from .triage_tools import gerer_consignes_triage
