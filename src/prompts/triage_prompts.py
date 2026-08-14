@@ -1,7 +1,7 @@
 from src.core import MailObject
 import json
 from pathlib import Path
-from utils import get_logger
+from src.utils import get_logger
 
 logger = get_logger(__name__)
 
