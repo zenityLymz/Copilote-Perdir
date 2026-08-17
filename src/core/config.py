@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     MAIN_COURANTE_FILE_ID: str
     SYNTHESIS_FOLDER_ID: Optional[str] = None
 
+    # --- Gestion des Archives Drive ---
+    ARCHIVE_START_YEAR: int = 2026  # Année de départ des archives à exclure lors des recherches Drive standard (à remonter dès lors qu'on n'a pas d'archives antérieures)
+
     # --- Configuration ChromaDB ---
     CHROMA_PERSIST_DIR: str = "data/chroma_db"
     EMBEDDING_MODEL_NAME: str = "gemini-embedding-001"

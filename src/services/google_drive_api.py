@@ -190,26 +190,48 @@ class GoogleDriveService:
             raise GoogleAPIError(f"Téléchargement Drive échoué : {e}")
 
 
-    async def search_files_by_content(self, query_string: str, limit: int = 3) -> List[Dict[str, Any]]:
+    async def search_files_by_content(
+        self, 
+        query_string: str, 
+        limit: int = 3, 
+        excluded_prefixes: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """
         Recherche plein texte dans le Drive. Retourne l'ID, le nom, le type et le lien d'accès.
+        Permet d'exclure des fichiers dont le nom contient certains préfixes (ex: R26_).
         """
         async with self._lock:
-            return await asyncio.to_thread(self._search_files_by_content_sync, query_string, limit)
+            return await asyncio.to_thread(
+                self._search_files_by_content_sync, 
+                query_string, 
+                limit, 
+                excluded_prefixes
+            )
 
-    def _search_files_by_content_sync(self, query_string: str, limit: int) -> List[Dict[str, Any]]:
+    def _search_files_by_content_sync(
+        self, 
+        query_string: str, 
+        limit: int,
+        excluded_prefixes: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        
         if not self.service:
             raise GoogleAPIError("Service Drive non authentifié.")
         
         # Opérateur 'fullText contains' pour chercher dans le contenu des documents
         query = f"fullText contains '{query_string}' and trashed = false"
+        
+        # --- Injection des exclusions d'archives ---
+        if excluded_prefixes:
+            for prefix in excluded_prefixes:
+                query += f" and not name contains '{prefix}'"
+
         logger.debug(f"Recherche plein texte Drive : {query}")
         
         try:
             results = self.service.files().list(
                 q=query,
                 pageSize=limit,
-                # On demande explicitement webViewLink pour que le Perdir puisse cliquer dessus
                 fields="nextPageToken, files(id, name, mimeType, webViewLink)",
                 orderBy="modifiedTime desc" 
             ).execute()

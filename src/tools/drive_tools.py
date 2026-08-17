@@ -1,6 +1,6 @@
 import re
 from typing import Optional, List
-from src.utils import get_logger, truncate_text_for_llm
+from src.utils import get_logger, truncate_text_for_llm, get_past_school_year_prefixes
 from src.core import get_drive_service, get_settings
 
 # Initialisation du logger
@@ -133,29 +133,57 @@ async def sauvegarder_main_courante_validee(texte_valide: str) -> bool:
         return False
 
 
-async def rechercher_info_drive(mots_cles: str) -> str:
+async def rechercher_info_drive(mots_cles: str, annee_archive: Optional[str] = None) -> str:
     """
     Recherche des mots-clés dans le contenu des documents du Google Drive et renvoie leur contenu.
     Utile pour trouver des procédures, des protocoles, des compte-rendus de réunion, des documents de travail ou des informations administratives.
+    Par défaut, la recherche se limite aux documents permanents et à ceux de l'année scolaire en cours.
     
     Args:
         mots_cles (str): Les mots-clés à rechercher (ex: "protocole harcèlement", "budget 2024").
                          Privilégier 2 à 3 mots-clés maximum.
+        annee_archive (Optional[str]): Vide par défaut (recherche dans l'année en cours). 
+                                       Si l'utilisateur demande explicitement une recherche dans 
+                                       une année scolaire passée, tu DOIS déduire l'année de rentrée 
+                                       correspondante, isoler ses 2 derniers chiffres, et fournir 
+                                       STRICTEMENT ce paramètre sous la forme du préfixe 'RXX_'.
+                                       Exemples : 
+                                       - Pour "l'an dernier" (si on est par exemple en novembre 2025 ou bien en mai 2026) -> "R24_"
+                                       - Pour "les archives de 2023-2024" -> "R23_"
+                                       - Pour "en 2021" -> "R21_"
+                                       - Pour "les archives de R25" --> "R25_"
                          
     Returns:
         str: Le contenu textuel des documents trouvés avec leur nom et URL d'accès, ou un message si rien n'est trouvé.
     """
-    logger.info(f"Outil rechercher_info_drive appelé avec les mots-clés : {mots_cles}")
+    logger.info(f"Outil rechercher_info_drive appelé. Mots-clés: '{mots_cles}' | Archive ciblée : {annee_archive}")
     
     try:
         # Récupération du singleton du service Drive via l'injection de dépendances
         drive_service = get_drive_service()
         
+        # --- GESTION TEMPORELLE ET EXCLUSION ---
+        prefixes_a_exclure = None
+        settings = get_settings()
+        
+        if not annee_archive:
+            # Comportement par défaut : on génère et on exclut toutes les années précédentes
+            prefixes_a_exclure = get_past_school_year_prefixes(start_year=settings.ARCHIVE_START_YEAR)
+        else:
+            # L'IA a formaté l'argument (ex: "R24_"). On l'injecte dans la recherche pour cibler l'archive.
+            mots_cles = f"{annee_archive} {mots_cles}"
+        # ---------------------------------------
+        
         # 1. On cherche les documents limités à 3 pour préserver la fenêtre de contexte
-        fichiers_trouves = await drive_service.search_files_by_content(mots_cles, limit=3)
+        fichiers_trouves = await drive_service.search_files_by_content(
+            query_string=mots_cles, 
+            limit=3,
+            excluded_prefixes=prefixes_a_exclure
+        )
         
         if not fichiers_trouves:
-            return f"Aucune information trouvée dans le Drive pour : '{mots_cles}'."
+            mention = f" pour l'archive {annee_archive}" if annee_archive else " (parmi les fichiers permanents et de l'année en cours)"
+            return f"Aucune information trouvée dans le Drive pour : '{mots_cles}'{mention}."
             
         resultat_texte = f"Voici les extraits des documents trouvés dans le Drive pour '{mots_cles}' :\n\n"
         

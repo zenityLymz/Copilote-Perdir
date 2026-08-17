@@ -11,3 +11,7 @@ from .text_utils import (
     split_telegram_message,
     extract_text_from_attachment
 )
+
+from time_utils import (
+    get_past_school_year_prefixes
+)
