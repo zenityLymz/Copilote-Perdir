@@ -24,6 +24,8 @@ class MailObject(BaseModel):
     id_mail: str = Field(..., description="Identifiant unique de l'e-mail provenant d'IMAP")
     date_reception: datetime = Field(..., description="Métadonnée : Date et heure de réception")
     expediteur: str = Field(..., description="Métadonnée : Adresse e-mail de l'expéditeur")
+    destinataires: Optional[str] = Field(None, description="Métadonnée : Adresses e-mail des destinataires principaux (To)")
+    copies: Optional[str] = Field(None, description="Métadonnée : Adresses e-mail en copie (Cc)")
     sujet: str = Field(..., description="Métadonnée : Objet du mail")
     contenu_texte: str = Field(..., description="Corps du message servant à générer les embeddings")
     pieces_jointes: List[str] = Field(default_factory=list, description="Noms des pièces jointes")

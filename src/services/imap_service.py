@@ -378,6 +378,11 @@ class IMAPService:
                 raw_expediteur = str(msg.get('from', ''))
                 extracted_email = extract_email_address(raw_expediteur)
                 expediteur = extracted_email if extracted_email else '(Expéditeur inconnu)'
+                raw_to = str(msg.get('to', ''))
+                raw_cc = str(msg.get('cc', ''))
+                # Nettoyage basique : si le champ est vide ou vaut 'None', on passe null (None)
+                destinataires = raw_to.strip() if raw_to and raw_to != 'None' else None
+                copies = raw_cc.strip() if raw_cc and raw_cc != 'None' else None
                 
                 # Parsing robuste de la date
                 date_tuple = email.utils.parsedate_tz(msg.get('date'))
@@ -447,6 +452,8 @@ class IMAPService:
                     id_mail=id_str,
                     date_reception=date_reception,
                     expediteur=expediteur,
+                    destinataires=destinataires,
+                    copies=copies,
                     sujet=sujet,
                     contenu_texte=contenu_final,
                     pieces_jointes=pieces_jointes,
