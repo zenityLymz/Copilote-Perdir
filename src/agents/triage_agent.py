@@ -88,7 +88,8 @@ class TriageAgent:
             logger.info(
                 f"Décision de tri prise [E-mail {decision.id_mail}] -> "
                 f"Dossier: '{decision.dossier_cible.value}', "
-                f"Alerte: {decision.necessite_notification}"
+                f"Alerte: {decision.necessite_notification} | "
+                f"Justification: {decision.justification}"
             )
             
             return decision
