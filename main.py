@@ -136,9 +136,13 @@ async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text("📊 <b>BILAN FINANCIER</b>\n\nAucune consommation enregistrée ce mois-ci.", parse_mode="HTML")
             return
             
-        total_cost = 0.0
+        total_cost_paid = 0.0
+        total_cost_free = 0.0
+        
         for modele, data in stats_mois.items():
             in_t, out_t = data['input'], data['output']
+            
+            # 1. Calcul du coût de base selon le type de modèle (Lite, Flash ou Pro)
             if "pro" in modele.lower():
                 cost = (in_t * settings.PRICE_PRO_INPUT / 1000000) + (out_t * settings.PRICE_PRO_OUTPUT / 1000000)
             elif "lite" in modele.lower():
@@ -146,7 +150,11 @@ async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             else:
                 cost = (in_t * settings.PRICE_FLASH_INPUT / 1000000) + (out_t * settings.PRICE_FLASH_OUTPUT / 1000000)
                 
-            total_cost += cost
+            # 2. Répartition dans la bonne cagnotte (Gratuite ou Payante)
+            if "gratuit" in modele.lower():
+                total_cost_free += cost
+            else:
+                total_cost_paid += cost
             
         # --- Traduction manuelle du mois ---
         MOIS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", 
@@ -154,9 +162,11 @@ async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         mois_texte = MOIS_FR[now.month - 1]
         
         reponse = f"📊 <b>BILAN FINANCIER ({mois_texte} {now.year})</b>\n\n"
-        reponse += f"💰 <b>Coût total estimé : ~{total_cost:.3f} $</b>\n"
-        budget_restant = 10.0 - total_cost
+        reponse += f"💰 <b>Coût réel (Payant) : ~{total_cost_paid:.3f} $</b>\n"
+        budget_restant = 10.0 - total_cost_paid
         reponse += f"🏦 <b>Budget Google restant : ~{budget_restant:.3f} $</b>\n\n"
+        reponse += f"🎁 <b>Économies (Gratuit) : ~{total_cost_free:.3f} $</b>\n"
+        reponse += f"<i>(Ce que vous auriez payé sans la clé gratuite)</i>\n\n"
 
         # 2. Répartition VISUELLE par fonction (Gratuit vs Payant)
         action_stats = await tracker.get_action_stats(start_date=premier_du_mois)
