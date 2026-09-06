@@ -3,6 +3,7 @@ import os
 import io
 import asyncio
 from typing import Optional, List, Dict, Any
+import mimetypes
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -347,3 +348,58 @@ class GoogleDriveService:
         except Exception as e:
             logger.error(f"Erreur lors de la mise à jour du fichier {file_id} : {e}")
             raise GoogleAPIError(f"Mise à jour Drive échouée : {e}")
+
+
+    async def upload_physical_file(self, file_path: str, parent_id: Optional[str] = None) -> Optional[str]:
+        """
+        Upload un fichier physique stocké localement vers Google Drive.
+        Méthode asynchrone non-bloquante.
+        
+        Args:
+            file_path (str): Le chemin complet vers le fichier sur le disque dur.
+            parent_id (Optional[str]): L'ID du dossier cible sur Drive. Si None, upload à la racine.
+            
+        Returns:
+            Optional[str]: L'ID du fichier créé sur Drive, ou None en cas d'échec.
+        """
+        async with self._lock:
+            return await asyncio.to_thread(self._upload_physical_file_sync, file_path, parent_id)
+
+    def _upload_physical_file_sync(self, file_path: str, parent_id: Optional[str] = None) -> Optional[str]:
+        """Logique synchrone d'upload de fichier physique."""
+        if not self.service:
+            raise GoogleAPIError("Service Drive non authentifié.")
+            
+        # Extraction du nom du fichier à partir du chemin complet
+        filename = os.path.basename(file_path)
+        
+        # Devine le type MIME du fichier (ex: application/pdf pour un .pdf)
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if mime_type is None:
+             mime_type = 'application/octet-stream' # Type par défaut générique
+             
+        logger.debug(f"Début de l'upload vers Drive : '{filename}' (Type: {mime_type})...")
+
+        file_metadata = {'name': filename}
+        if parent_id:
+            file_metadata['parents'] = [parent_id]
+
+        try:
+            # On demande à Python d'ouvrir le fichier depuis le SSD
+            # MediaFileUpload est optimisé par Google pour lire par gros blocs (chunks)
+            from googleapiclient.http import MediaFileUpload
+            media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
+            
+            file = self.service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id'
+            ).execute()
+            
+            uploaded_id = file.get('id')
+            logger.info(f"Fichier '{filename}' uploadé avec succès (ID: {uploaded_id}).")
+            return uploaded_id
+            
+        except Exception as e:
+            logger.error(f"Échec de l'upload de '{filename}' vers Google Drive : {e}")
+            raise GoogleAPIError(f"Upload physique échoué : {e}")

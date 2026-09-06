@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from src.services.token_tracker import TokenTrackerService
     from src.services.gemini_router import GeminiRouterService
     from src.workflows.pipeline_b_telegram import PipelineBTelegram
+    from src.services.academic_cloud_service import AcademicCloudService
 
 # L'astuce est de mettre le nom du type entre guillemets ('IMAPService') 
 # car la classe n'est pas "réellement" importée à l'exécution.
@@ -29,6 +30,7 @@ _telegram_service: Optional['TelegramBotService'] = None
 _token_tracker_service: Optional['TokenTrackerService'] = None
 _gemini_router_service: Optional['GeminiRouterService'] = None
 _pipeline_b: Optional['PipelineBTelegram'] = None
+_academic_cloud_service: Optional['AcademicCloudService'] = None
 
 # --- Service IMAP ---
 def get_imap_service() -> IMAPService:
@@ -96,3 +98,13 @@ def get_pipeline_b() -> 'PipelineBTelegram':
 def set_pipeline_b(pipeline: 'PipelineBTelegram') -> None:
     global _pipeline_b
     _pipeline_b = pipeline
+
+# --- Service Cloud Académique ---
+def get_academic_cloud_service() -> 'AcademicCloudService':
+    if _academic_cloud_service is None:
+        raise RuntimeError("Le service Cloud Académique n'a pas été initialisé dans le registre.")
+    return _academic_cloud_service
+
+def set_academic_cloud_service(service: 'AcademicCloudService') -> None:
+    global _academic_cloud_service
+    _academic_cloud_service = service

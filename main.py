@@ -16,11 +16,14 @@ from src.core.dependencies import (
     set_imap_service,
     get_imap_service,
     set_chroma_service,
+    get_drive_service,
     set_drive_service,
     set_telegram_service,
     set_token_tracker_service,
     get_token_tracker_service,
-    set_gemini_router_service
+    set_gemini_router_service,
+    set_academic_cloud_service,
+    get_academic_cloud_service
 )
 from src.utils.logger import setup_logger, get_logger
 
@@ -30,7 +33,8 @@ from src.services import (
     GoogleDriveService,
     TelegramBotService,
     TokenTrackerService,
-    GeminiRouterService
+    GeminiRouterService,
+    AcademicCloudService
 )
 from src.agents import (
     TriageAgent,
@@ -283,6 +287,80 @@ async def run_auto_synthesis_loop(telegram_service: TelegramBotService, pipeline
         # Le système s'endort et vérifie l'heure toutes les 5 minutes
         await asyncio.sleep(300)
 
+
+async def drive_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Commande /drive déclenchée par le Perdir.
+    Télécharge une arborescence depuis le cloud académique et l'uploade sur Google Drive.
+    """
+    logger.info("Commande /drive demandée par le Perdir.")
+    
+    # 1. Message d'attente (formaté en HTML strict)
+    await update.message.reply_text("⏳ <b>Transfert initié :</b> Téléchargement de l'archive depuis le cloud académique en cours...", parse_mode="HTML")
+    
+    try:
+        settings = get_settings()
+        cloud_service = get_academic_cloud_service()
+        drive_service = get_drive_service()
+        
+        # 2. Téléchargement et extraction locale (SSD)
+        temp_dir, extracted_files = await cloud_service.download_and_extract()
+        
+        await update.message.reply_text(f"✅ Archive extraite. <b>{len(extracted_files)}</b> fichier(s) trouvé(s). Début de la synchronisation vers Google Drive (cela peut prendre quelques minutes)...", parse_mode="HTML")
+        
+        # 3. Synchronisation vers Google Drive avec maintien de l'arborescence
+        root_target_id = settings.TARGET_DRIVE_FOLDER_ID
+        extract_root = os.path.join(temp_dir, "extracted")
+        
+        # Dictionnaire pour mémoriser les ID des dossiers créés sur Drive et éviter les doublons
+        # La clé "" (racine) correspond au dossier cible initial
+        folder_cache = {"": root_target_id} 
+        
+        for file_path in extracted_files:
+            # Calcul du chemin relatif par rapport à la racine de l'extraction
+            rel_path = os.path.relpath(file_path, extract_root)
+            rel_dir = os.path.dirname(rel_path)
+            
+            current_parent_id = root_target_id
+            
+            # Si le fichier est dans un sous-dossier, on s'assure qu'il existe sur Drive
+            if rel_dir and rel_dir != ".":
+                parts = Path(rel_dir).parts
+                built_path = ""
+                
+                for part in parts:
+                    prev_path = built_path
+                    built_path = os.path.join(built_path, part) if built_path else part
+                    
+                    # Création du sous-dossier sur Google Drive s'il n'est pas encore dans notre cache
+                    if built_path not in folder_cache:
+                        parent_id_for_part = folder_cache[prev_path]
+                        logger.debug(f"Création du dossier '{part}' sur Drive...")
+                        new_folder_id = await drive_service.create_folder(folder_name=part, parent_id=parent_id_for_part)
+                        folder_cache[built_path] = new_folder_id
+                        
+                current_parent_id = folder_cache[rel_dir]
+            
+            # Upload du fichier physique dans le bon dossier Drive
+            await drive_service.upload_physical_file(file_path=file_path, parent_id=current_parent_id)
+            
+        # 4. Nettoyage du SSD (suppression du dossier temporaire)
+        await cloud_service.cleanup(temp_dir)
+        
+        # 5. Message de succès
+        await update.message.reply_text("🎉 <b>Transfert terminé avec succès !</b>\nTous les fichiers ont été copiés sur votre Google Drive.", parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"Erreur technique lors du transfert Drive : {e}", exc_info=True)
+        await update.message.reply_text("⚠️ <b>Échec du transfert :</b> Une erreur technique est survenue. L'opération a été annulée.", parse_mode="HTML")
+        
+        # Sécurité : Tentative de nettoyage forcé en cas de crash
+        try:
+            if 'temp_dir' in locals():
+                await cloud_service.cleanup(temp_dir)
+        except Exception:
+            pass
+
 async def main() -> None:
     """
     Fonction principale asynchrone orchestrant l'initialisation et le lancement des pipelines.
@@ -324,6 +402,10 @@ async def main() -> None:
         gemini_router = GeminiRouterService()
         set_gemini_router_service(gemini_router)
 
+        # - Service Cloud Académique
+        academic_cloud_service = AcademicCloudService()
+        set_academic_cloud_service(academic_cloud_service)
+
         logger.info("Tous les services sont connectés et enregistrés.")
 
         # 3. Initialisation des Agents IA (Modèles Gemini)
@@ -356,6 +438,9 @@ async def main() -> None:
 
         # Enregistrement de la commande /synthese pour le Perdir
         telegram_service.register_command("synthese", synthese_command)
+
+        # Enregistrement de la commande /drive pour le Perdir
+        telegram_service.register_command("drive", drive_command)
 
         # Raccordement du gestionnaire de messages naturels Telegram vers le Pipeline B
         telegram_service.register_message_handler(pipeline_b.process_telegram_message)

@@ -15,3 +15,4 @@ from .google_drive_api import GoogleDriveService
 from .google_calendar_tasks import GoogleCalendarTasksService
 from .token_tracker import TokenTrackerService
 from .gemini_router import GeminiRouterService
+from .academic_cloud_service import AcademicCloudService

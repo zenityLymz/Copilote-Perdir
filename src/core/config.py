@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     MAIN_COURANTE_FILE_ID: str
     SYNTHESIS_FOLDER_ID: Optional[str] = None
 
+    # URL du partage Cloud Académique
+    ACADEMIC_CLOUD_URL: str
+    # ID du dossier cible sur Google Drive pour transfert depuis le cloud académique
+    TARGET_DRIVE_FOLDER_ID: str
+
     # --- Gestion des Archives Drive ---
     ARCHIVE_START_YEAR: int = 2026  # Année de départ des archives à exclure lors des recherches Drive standard (à remonter dès lors qu'on n'a pas d'archives antérieures)
 
