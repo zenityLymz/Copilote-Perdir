@@ -63,9 +63,11 @@ class IMAPService:
             self.mail.login(self.user, self.password)
             logger.info("Connexion IMAP établie avec succès.")
         except imaplib.IMAP4.error as e:
+            self.mail = None
             logger.error(f"Échec de l'authentification IMAP : {e}")
             raise IMAPError(f"Échec de l'authentification IMAP : {e}")
         except Exception as e:
+            self.mail = None
             logger.error(f"Erreur de réseau ou de connexion (Timeout) au serveur IMAP : {e}")
             raise IMAPError(f"Erreur de connexion au serveur IMAP - {e}")
 
@@ -92,17 +94,21 @@ class IMAPService:
                 self.mail_listener.logout()
                 logger.info("Déconnexion IMAP (Listener) réussie.")
             except Exception as e:
-                pass
+                logger.warning(f"Erreur mineure lors de la déconnexion IMAP (Listener) : {e}")
             finally:
                 self.mail_listener = None
 
     def _ensure_connected(self) -> None:
         """
-        Vérifie si la connexion IMAP est toujours active. 
+        Vérifie si la connexion IMAP est toujours active ET authentifiée. 
         En cas de perte (Timeout, Pare-feu, Sophos), force une reconnexion transparente.
         """
         try:
             if self.mail:
+                # VÉRIFICATION CRITIQUE : Le client est-il authentifié ?
+                if getattr(self.mail, 'state', None) == 'NONAUTH':
+                    raise IMAPError("Le client IMAP est connecté mais non authentifié (NONAUTH).")
+                
                 # La commande NOOP (No Operation) est le standard pour tester un "ping" IMAP
                 status, _ = self.mail.noop()
                 if status != 'OK':
@@ -116,7 +122,10 @@ class IMAPService:
             try:
                 self._disconnect_sync()
             except Exception:
-                self.mail = None
+                pass
+            
+            # Sécurité absolue : on s'assure de purger l'objet zombie
+            self.mail = None
                 
             # On relance une connexion fraîche
             self._connect_sync()
