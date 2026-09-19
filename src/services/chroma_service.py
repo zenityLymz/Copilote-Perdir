@@ -106,7 +106,7 @@ class ChromaDBService:
             metadatas.append({
                 "expediteur": mail.expediteur,
                 "sujet": mail.sujet,
-                "date_reception": mail.date_reception.isoformat(),
+                "date_reception": int(mail.date_reception.timestamp()),
                 "pieces_jointes": pieces_jointes_str,
                 "traite": mail.est_traite
             })

@@ -1,5 +1,6 @@
 import os
 from typing import Optional
+from datetime import datetime
 from src.utils import get_logger, truncate_text_for_llm
 from src.core import get_imap_service, get_chroma_service
 from src.services.chroma_service import ChromaDBService
@@ -73,9 +74,14 @@ async def rechercher_dans_les_emails(
         conditions = []
         
         if date_debut:
-            conditions.append({"date_reception": {"$gte": date_debut}})
+            # On traduit la chaîne ISO de l'IA en Timestamp Unix mathématique
+            ts_debut = int(datetime.fromisoformat(date_debut.replace("Z", "+00:00")).timestamp())
+            conditions.append({"date_reception": {"$gte": ts_debut}})
+            
         if date_fin:
-            conditions.append({"date_reception": {"$lte": date_fin}})
+            ts_fin = int(datetime.fromisoformat(date_fin.replace("Z", "+00:00")).timestamp())
+            conditions.append({"date_reception": {"$lte": ts_fin}})
+
         if expediteur:
             # Utilisation de $contains car l'en-tête "From" est souvent complexe 
             # (ex: "Jean Dupont <jean.dupont@ac-lyon.fr>")
