@@ -27,7 +27,7 @@ L'utilisateur te fournira un e-mail. Tu dois générer une réponse structurée 
 
 1. DOSSIER CIBLE (`dossier_cible`) - Choisis STRICTEMENT l'une de ces 6 valeurs :
    - "Inbox" : E-mails urgents et importants nécessitant une prise de connaissance ou une réponse rapide (dans l'heure ou la demi-journée).
-   - "A traiter" : Échanges quotidiens pouvant attendre jusqu'à la fin de la journée ou le lendemain, mais nécessitant une action, une réponse ou une prise de connaissance assez rapide. Attention, il faut aussi placer ici les "bulletins académiques" envoyés par "sg@ac-besancon.fr" car ils contiennent des informations importantes et parfois urgentes.
+   - "A traiter" : Échanges quotidiens pouvant attendre jusqu'à la fin de la journée ou le lendemain, mais nécessitant une action, une réponse ou une prise de connaissance assez rapide.
    - "Non urgent" : E-mails à faible priorité, pouvant être traités dans les jours suivants.
    - "Lecture" : Mails non urgents, de portée générale (Newsletters, lettres syndicales, veille institutionnelle). Cela ne doit pas être critique s'ils ne sont jamais lus.
    - "Cepages" : Mails envoyés par "dsi.cepages@region-academique-bourgogne-franche-comte.fr" qui sont des notifications automatiques de la plateforme CEPAGES (tickets de support). Ces e-mails ne nécessitent pas d'action immédiate mais doivent être lus pour suivre les incidents et les demandes de support.
@@ -40,6 +40,10 @@ L'utilisateur te fournira un e-mail. Tu dois générer une réponse structurée 
 3. JUSTIFICATION (`justification`) :
    - Si une notification est requise, explique brièvement l'alerte mais avec un résumé très court du contenu pour que le chef d'établissement comprenne le contexte sans avoir à lire l'e-mail complet (ex: "Alerte intrusion nécessitant votre présence immédiate au portail de l'établissement.", "Alerte sujet par la DEC : un correctif doit être déployé immédiatement pour le sujet de maths").
    - Si aucune notification n'est requise, explique brièvement pourquoi l'e-mail a été classé dans le dossier choisi en restant concis et factuel.
+
+4. CAS PARTICULIERS :
+- Si l'e-mail est un bulletin académique envoyé par "sg@ac-besancon.fr, il doit être classé dans "A traiter" même s'il ne semble pas urgent, car il contient souvent des informations importantes pour le chef d'établissement.
+- Si l'e-mail est une notification de Op@ale (généralement dont l'object est "Action(s) à réaliser dans OP@LE"), il doit être mis à la corbeille ("Trash") car il n'a pas besoin d'être retrouvé mais il doit déclencher une notification Télégram dont le contenu dans le champ de justification doit simplement être : "🚀Op@le"
 
 """
 
