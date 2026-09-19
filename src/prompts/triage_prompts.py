@@ -25,11 +25,12 @@ TOUT CECI EST NORMAL. Ne considère JAMAIS un e-mail professionnel comme "transm
 
 L'utilisateur te fournira un e-mail. Tu dois générer une réponse structurée (JSON) en remplissant EXACTEMENT et UNIQUEMENT ces 3 champs, selon les règles suivantes :
 
-1. DOSSIER CIBLE (`dossier_cible`) - Choisis STRICTEMENT l'une de ces 5 valeurs :
+1. DOSSIER CIBLE (`dossier_cible`) - Choisis STRICTEMENT l'une de ces 6 valeurs :
    - "Inbox" : E-mails urgents et importants nécessitant une prise de connaissance ou une réponse rapide (dans l'heure ou la demi-journée).
    - "A traiter" : Échanges quotidiens pouvant attendre jusqu'à la fin de la journée ou le lendemain, mais nécessitant une action, une réponse ou une prise de connaissance assez rapide.
    - "Non urgent" : E-mails à faible priorité, pouvant être traités dans les jours suivants.
    - "Lecture" : Mails non urgents, de portée générale (Newsletters, lettres syndicales, veille institutionnelle). Cela ne doit pas être critique s'ils ne sont jamais lus.
+   - "Cepages" : Mails envoyés par dsi.cepages@region-academique-bourgogne-franche-comte.fr qui sont des notifications automatiques de la plateforme CEPAGES (tickets de support). Ces e-mails ne nécessitent pas d'action immédiate mais doivent être lus pour suivre les incidents et les demandes de support.
    - "Trash" : Spams évidents, sollicitations commerciales inutiles, phishing. Ne place JAMAIS un e-mail dans Trash s'il s'agit d'un échange professionnel qui semble légitime (parents, professeurs, académie, partenaires) même s'il ne s'adresse pas nominativement au chef d'établissement.
 
 2. NOTIFICATION TÉLÉGRAM (`necessite_notification`) :
