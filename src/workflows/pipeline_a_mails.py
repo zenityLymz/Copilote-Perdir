@@ -165,12 +165,23 @@ class PipelineAMails:
                 
             logger.info(f"{len(emails)} nouvel/nouveaux e-mail(s) envoyé(s) récupéré(s). Début de l'indexation.")
 
-            # 2. Indexation en lot dans ChromaDB (très rapide)
-            await self.chroma_service.index_emails(emails)
-            
-            # 3. Marquage comme traité pour qu'ils soient ignorés aux prochains cycles
+            # 2. Traitement itératif avec isolation et temporisation
             for mail in emails:
-                await self.imap_service.mark_as_processed(mail.id_mail)
+                try:
+                    # A. Indexation d'un seul e-mail (on le passe dans une liste [mail])
+                    await self.chroma_service.index_emails([mail])
+                    
+                    # B. Acquittement immédiat si l'indexation a réussi
+                    await self.imap_service.mark_as_processed(mail.id_mail)
+                    
+                except Exception as e:
+                    # C. Isolation : si un mail plante, on loggue l'erreur mais on passe au suivant
+                    logger.error(f"Échec de l'indexation pour l'e-mail envoyé {mail.id_mail} : {e}")
+                    
+                finally:
+                    # D. Temporisation anti-surcharge (Rate Limiting) de l'API Gemini
+                    settings = get_settings()
+                    await asyncio.sleep(settings.GEMINI_API_PAUSE_SECONDS)
                 
             logger.info(f"Indexation silencieuse de {len(emails)} e-mails envoyés terminée avec succès.")
             
