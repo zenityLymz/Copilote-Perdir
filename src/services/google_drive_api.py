@@ -417,38 +417,69 @@ class GoogleDriveService:
         if not self.service:
             raise GoogleAPIError("Service Drive non authentifié.")
         
-        # Si aucun parent n'est fourni, on utilise le dossier cible de la configuration
         if not parent_id:
             from src.core.config import get_settings
             parent_id = get_settings().TARGET_DRIVE_FOLDER_ID
             
-        logger.debug(f"Récupération de l'arborescence des dossiers pour le parent ID : {parent_id}")
+        logger.debug(f"Récupération de l'arborescence complète pour le parent ID : {parent_id}")
         
-        folders = []
+        # 1. On récupère la liste brute de TOUS les dossiers (rapide, 1 seule requête)
+        query = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        
+        all_folders = []
         page_token = None
-        
-        # Requête ciblée : UNIQUEMENT des dossiers, dans le dossier cible, non supprimés
-        query = f"mimeType = 'application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed = false"
         
         try:
             while True:
                 results = self.service.files().list(
                     q=query,
-                    pageSize=1000, # Large limite pour minimiser les requêtes réseau
-                    fields="nextPageToken, files(id, name)",
+                    pageSize=1000,
+                    fields="nextPageToken, files(id, name, parents)",
                     pageToken=page_token
                 ).execute()
                 
-                items = results.get('files', [])
-                for item in items:
-                    folders.append({"id": item['id'], "nom": item['name']})
-                    
+                all_folders.extend(results.get('files', []))
+                
                 page_token = results.get('nextPageToken', None)
                 if page_token is None:
                     break
                     
-            logger.info(f"{len(folders)} sous-dossier(s) Drive trouvé(s).")
-            return folders
+            # 2. Construction d'un dictionnaire (parent -> liste d'enfants) pour un parcours local ultra-rapide
+            enfants_par_parent = {}
+            for f in all_folders:
+                parents = f.get('parents', [])
+                if parents:
+                    p_id = parents[0]
+                    if p_id not in enfants_par_parent:
+                        enfants_par_parent[p_id] = []
+                    enfants_par_parent[p_id].append(f)
+                    
+            # 3. Parcours récursif en partant UNIQUEMENT du dossier Collège (Cloisonnement garanti)
+            dossiers_cibles = []
+            
+            def explorer(dossier_id, chemin_actuel):
+                # On récupère les enfants directs de ce dossier
+                enfants = enfants_par_parent.get(dossier_id, [])
+                for enfant in enfants:
+                    nom_enfant = enfant.get('name')
+                    id_enfant = enfant.get('id')
+                    
+                    # Construction du chemin complet pour aider l'IA sémantiquement
+                    nouveau_chemin = f"{chemin_actuel} / {nom_enfant}" if chemin_actuel else nom_enfant
+                    
+                    dossiers_cibles.append({
+                        "id": id_enfant,
+                        "nom": nouveau_chemin
+                    })
+                    
+                    # La fonction s'appelle elle-même pour descendre au niveau suivant
+                    explorer(id_enfant, nouveau_chemin)
+                    
+            # Lancement de l'exploration depuis ta racine Collège
+            explorer(parent_id, "")
+            
+            logger.info(f"{len(dossiers_cibles)} sous-dossier(s) trouvés dans l'arborescence cible.")
+            return dossiers_cibles
             
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des dossiers Drive : {e}")

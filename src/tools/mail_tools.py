@@ -111,8 +111,8 @@ async def rechercher_dans_les_emails(
         contexte_formate = "Voici les extraits d'e-mails trouvés dans la base de données :\n\n"
         
         for i, res in enumerate(resultats, 1):
-            mail_id = res.get('id', 'ID inconnu')
             meta = res.get('metadata', {})
+            timestamp_mail = meta.get('date_reception', 0)
             date_reception = meta.get('date_reception', 'Date inconnue')
             mail_expediteur = meta.get('expediteur', 'Expéditeur inconnu')
             sujet = meta.get('sujet', 'Sans objet')
@@ -126,7 +126,7 @@ async def rechercher_dans_les_emails(
             pj_texte = pieces_jointes if pieces_jointes else "Aucune"
             
             contexte_formate += f"--- E-MAIL {i} ---\n"
-            contexte_formate += f"ID_MAIL : {mail_id}\n"
+            contexte_formate += f"TIMESTAMP_MAIL : {timestamp_mail}\n"
             contexte_formate += f"Date : {date_reception}\n"
             contexte_formate += f"De : {mail_expediteur}\n"
             contexte_formate += f"Sujet : {sujet}\n"
@@ -134,6 +134,7 @@ async def rechercher_dans_les_emails(
             contexte_formate += f"Extrait du contenu : {texte_tronque}\n"
             contexte_formate += "-" * 20 + "\n\n"
             
+        logger.info(f"-> Contexte brut remonté à l'Orchestrateur :\n{contexte_formate}")    
         return contexte_formate
         
     except Exception as e:
@@ -251,22 +252,28 @@ async def generer_briefing_emails(criteres: Optional[str] = None, limite: int = 
 
 
 async def transferer_pj_vers_drive(
-    sujet_mail: str, 
-    expediteur_mail: str, 
+    timestamp_mail: int, 
     nom_piece_jointe: str, 
     id_dossier_drive: str,
     nouveau_nom: Optional[str] = None,
-    ajouter_prefixe_annee: bool = False
+    ajouter_prefixe_annee: bool = False,
 ) -> str:
     """
-    Télécharge une PJ, la renomme éventuellement, et la sauvegarde dans le Drive.
+    Télécharge une pièce jointe depuis un e-mail et la sauvegarde sur Google Drive.
+    
+    Args:
+        timestamp_mail (int): Le timestamp UNIX exact de l'e-mail (récupéré via la recherche).
+        nom_piece_jointe (str): Le nom complet de la pièce jointe à transférer.
+        id_dossier_drive (str): L'identifiant Google Drive du dossier cible.
+        nouveau_nom (str): Un nouveau nom de fichier synthétique si pertinent (SANS l'extension).
+        ajouter_prefixe_annee (bool): Mettre à True pour ajouter le préfixe de l'année scolaire (RXX_).
     """
     import os
     import shutil
     from datetime import datetime
     from src.core.dependencies import get_drive_service
     
-    logger.info(f"Outil 'transferer_pj_vers_drive' appelé pour '{nom_piece_jointe}'. Nouveau nom: {nouveau_nom}, Préfixe: {ajouter_prefixe_annee}")
+    logger.info(f"Outil 'transferer_pj_vers_drive' appelé. Timestamp: {timestamp_mail}, PJ: '{nom_piece_jointe}'")
     
     imap_service = get_imap_service()
     drive_service = get_drive_service()
@@ -274,8 +281,7 @@ async def transferer_pj_vers_drive(
     try:
         # 1. Téléchargement local depuis le serveur académique
         chemin_fichier_local = await imap_service.download_attachment(
-            sujet=sujet_mail, 
-            expediteur=expediteur_mail, 
+            timestamp_mail=timestamp_mail,
             attachment_name=nom_piece_jointe
         )
         

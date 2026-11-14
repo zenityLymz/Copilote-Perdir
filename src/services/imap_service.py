@@ -667,37 +667,39 @@ class IMAPService:
             time.sleep(5)
             return False
 
-    async def download_attachment(self, sujet: str, expediteur: str, attachment_name: str) -> Optional[str]:
-        """
-        Télécharge une pièce jointe spécifique d'un e-mail et la sauvegarde sur le SSD local.
-        Méthode asynchrone non-bloquante.
-        """
+    async def download_attachment(self, timestamp_mail: int, attachment_name: str) -> Optional[str]:
+        """Télécharge une PJ en se basant sur le timestamp de l'e-mail."""
         async with self._lock:
-            return await asyncio.to_thread(self._download_attachment_sync, sujet, expediteur, attachment_name)
+            return await asyncio.to_thread(self._download_attachment_sync, timestamp_mail, attachment_name)
 
-    def _download_attachment_sync(self, sujet: str, expediteur: str, attachment_name: str) -> Optional[str]:
+    def _download_attachment_sync(self, timestamp_mail: int, attachment_name: str) -> Optional[str]:
         import os
         import tempfile
         import email
         import re
+        from datetime import datetime, timedelta
         from email import policy
         
         self._ensure_connected()
-        logger.info(f"Recherche et téléchargement de la PJ '{attachment_name}' pour le mail de {expediteur}...")
+        logger.info(f"Recherche de la PJ '{attachment_name}' pour le mail du timestamp {timestamp_mail}...")
         
         try:
             status, folders = self.mail.list()
             if status != 'OK':
-                raise IMAPError("Impossible de lister les dossiers de la messagerie.")
+                raise IMAPError("Impossible de lister les dossiers.")
                 
-            # Nettoyage des chaînes pour éviter de faire planter la requête IMAP SEARCH
-            safe_sujet = sujet.replace('"', '').replace('\\', '').strip()
-            safe_expediteur = expediteur.replace('"', '').replace('\\', '').strip()
+            def clean_str(s: str) -> str:
+                return re.sub(r'[^a-z0-9]', '', s.lower())
+                
+            # Calcul d'une fenêtre de recherche de 3 jours (J-1 à J+1)
+            dt_mail = datetime.fromtimestamp(timestamp_mail)
+            date_debut = (dt_mail - timedelta(days=1)).strftime("%d-%b-%Y")
+            date_fin = (dt_mail + timedelta(days=1)).strftime("%d-%b-%Y")
+            
+            search_query = f'SINCE "{date_debut}" BEFORE "{date_fin}"'
             
             for folder_data in folders:
                 folder_str = folder_data.decode('utf-8')
-                
-                # On exclut la corbeille pour ne pas récupérer une ancienne version supprimée
                 if "trash" in folder_str.lower() or "corbeille" in folder_str.lower() or "deleted" in folder_str.lower():
                     continue
                     
@@ -708,44 +710,41 @@ class IMAPService:
                 if status != 'OK':
                     continue
                     
-                # Recherche croisée robuste par Sujet ET Expéditeur
-                search_query = f'SUBJECT "{safe_sujet}" FROM "{safe_expediteur}"'
-                
-                try:
-                    status, messages = self.mail.search(None, search_query.encode('utf-8'))
-                except Exception:
-                    continue # Ignore les erreurs d'encodage sur certains dossiers
+                # Recherche par fenêtre de date (très rapide et 100% robuste sur IMAP)
+                status, messages = self.mail.search(None, search_query.encode('utf-8'))
                 
                 if status == 'OK' and messages[0]:
                     mail_ids = messages[0].split()
                     
-                    for m_id in mail_ids:
+                    for m_id in reversed(mail_ids): # On lit du plus récent au plus ancien
                         status, msg_data = self.mail.fetch(m_id, '(RFC822)')
                         if status == 'OK':
                             for response_part in msg_data:
                                 if isinstance(response_part, tuple):
                                     msg = email.message_from_bytes(response_part[1], policy=policy.default)
                                     
-                                    if msg.is_multipart():
-                                        for part in msg.walk():
-                                            filename = part.get_filename()
-                                            # Vérification partielle pour pardonner les erreurs de frappe de l'IA
-                                            if filename and attachment_name.lower() in filename.lower():
-                                                payload = part.get_payload(decode=True)
-                                                if payload:
-                                                    # Création d'un dossier temporaire sécurisé sur le SSD
-                                                    temp_dir = tempfile.mkdtemp(prefix="pj_copilote_")
-                                                    file_path = os.path.join(temp_dir, filename)
-                                                    
-                                                    with open(file_path, 'wb') as f:
-                                                        f.write(payload)
-                                                        
-                                                    logger.info(f"Pièce jointe sauvegardée avec succès : {file_path}")
-                                                    return file_path
+                                    # Vérification précise du Timestamp en Python
+                                    date_tuple = email.utils.parsedate_tz(msg.get('date'))
+                                    if date_tuple:
+                                        msg_ts = int(email.utils.mktime_tz(date_tuple))
+                                        # Si le timestamp correspond (à 60 secondes près pour la tolérance réseau)
+                                        if abs(msg_ts - timestamp_mail) < 60:
+                                            if msg.is_multipart():
+                                                for part in msg.walk():
+                                                    filename = part.get_filename()
+                                                    if filename and clean_str(attachment_name) in clean_str(filename):
+                                                        payload = part.get_payload(decode=True)
+                                                        if payload:
+                                                            temp_dir = tempfile.mkdtemp(prefix="pj_copilote_")
+                                                            file_path = os.path.join(temp_dir, filename)
+                                                            with open(file_path, 'wb') as f:
+                                                                f.write(payload)
+                                                            logger.info(f"PJ sauvegardée avec succès : {file_path}")
+                                                            return file_path
 
-            logger.warning(f"Impossible de trouver la pièce jointe '{attachment_name}' dans les mails.")
+            logger.warning(f"PJ '{attachment_name}' introuvable pour le timestamp {timestamp_mail}.")
             return None
             
         except Exception as e:
-            logger.error(f"Erreur technique lors de l'extraction de la pièce jointe : {e}", exc_info=True)
+            logger.error(f"Erreur d'extraction PJ : {e}", exc_info=True)
             return None
