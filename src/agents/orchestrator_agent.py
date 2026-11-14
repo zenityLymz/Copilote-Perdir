@@ -28,7 +28,9 @@ from src.tools import (
     enregistrer_brouillon_mail, 
     generer_briefing_emails,
     generer_brouillon_synthese_hebdo,
-    gerer_consignes_triage
+    gerer_consignes_triage,
+    lister_dossiers_racine_drive,
+    transferer_pj_vers_drive
 )
 
 # Initialisation du logger pour ce module
@@ -74,7 +76,9 @@ class OrchestratorAgent:
             enregistrer_brouillon_mail,
             generer_briefing_emails,
             generer_brouillon_synthese_hebdo,
-            gerer_consignes_triage
+            gerer_consignes_triage,
+            lister_dossiers_racine_drive,
+            transferer_pj_vers_drive
         ]
 
     def _format_chat_history(self, chat_history: ChatHistory, current_user_message: str) -> List[types.Content]:

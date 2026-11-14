@@ -11,7 +11,8 @@ pour l'IA.
 from .mail_tools import (
     rechercher_dans_les_emails,
     enregistrer_brouillon_mail,
-    generer_briefing_emails
+    generer_briefing_emails,
+    transferer_pj_vers_drive
 )
 
 # --- Outils Google Drive ---
@@ -20,7 +21,8 @@ from .drive_tools import (
     sauvegarder_main_courante_validee,
     rechercher_info_drive,
     lire_memoire_etablissement,
-    generer_brouillon_synthese_hebdo
+    generer_brouillon_synthese_hebdo,
+    lister_dossiers_racine_drive
 )
 
 # --- Outils d'Agenda et de Planification (Google Calendar / Tasks) ---

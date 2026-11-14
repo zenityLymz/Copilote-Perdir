@@ -111,20 +111,26 @@ async def rechercher_dans_les_emails(
         contexte_formate = "Voici les extraits d'e-mails trouvés dans la base de données :\n\n"
         
         for i, res in enumerate(resultats, 1):
+            mail_id = res.get('id', 'ID inconnu')
             meta = res.get('metadata', {})
             date_reception = meta.get('date_reception', 'Date inconnue')
             mail_expediteur = meta.get('expediteur', 'Expéditeur inconnu')
             sujet = meta.get('sujet', 'Sans objet')
+            pieces_jointes = meta.get('pieces_jointes', '')
             texte_brut = res.get('document', '')
             
             # --- Troncature intelligente pour alléger le prompt de l'Orchestrateur ---
             # On limite chaque résultat à ~400 tokens (soit environ 1200 caractères)
             texte_tronque = truncate_text_for_llm(texte_brut, max_tokens=400)
+            # Formatage sécurisé s'il n'y a pas de pièce jointe
+            pj_texte = pieces_jointes if pieces_jointes else "Aucune"
             
             contexte_formate += f"--- E-MAIL {i} ---\n"
+            contexte_formate += f"ID_MAIL : {mail_id}\n"
             contexte_formate += f"Date : {date_reception}\n"
             contexte_formate += f"De : {mail_expediteur}\n"
             contexte_formate += f"Sujet : {sujet}\n"
+            contexte_formate += f"Pièces jointes : {pj_texte}\n"
             contexte_formate += f"Extrait du contenu : {texte_tronque}\n"
             contexte_formate += "-" * 20 + "\n\n"
             
@@ -144,7 +150,7 @@ async def enregistrer_brouillon_mail(destinataire: str, sujet: str, contexte_ori
     Tu dois d'abord t'assurer d'avoir bien compris le contexte (qui est le destinataire (est-ce un prof, un aed, un parent, un inspecteur, etc.), quel est le sujet, quel est le contexte de l'échange, etc.) avant de transmettre la requête à l'agent spécialisé.
     Dis-toi bien que l'agent spécialisé n'a pas connaissance du contexte de l'établissement donc il faut que tu lui donnes tout ce qui est nécessaire à sa tâche.
     Affiche ENSUITE fidèlement le contenu exact qui t'est retourné par cet outil (pas de texte supplémentaire, et pas de signature par exemple, car celle-ci sera ajoutée automatiquement plus tard lors de l'envoi manuel). Ne modifie jamais le texte généré par l'agent spécialisé, même si tu penses qu'il pourrait être amélioré.
-    La seule chose que tu dois faire, c'est de juger si le texte fourni te semble conforme à ce que j'attends. Pour ce faire, à la fin de la réponse que tu m'envoies sur Telegram, après la citation exacte du mail généré, tu dois ajouter : "Validation orchestrateur : conforme" ou alors "Validation orchestrateur : non conforme (il manque une information concernant [...] ou bien le style n'est pas respecté, etc.)".
+    La seule chose que tu dois faire, c'est de juger si le texte fourni te semble conforme à ce que j'attends. Pour ce faire, à la fin de la réponse que tu m'envoies sur Telegram, après la citation exacte du mail généré, tu dois ajouter : "Validation copilote : ✅ Conforme" ou alors "Validation copilote : 🚨 Non conforme (il manque une information concernant [...] ou bien le style n'est pas respecté, etc.)".
 
     Args:
         destinataire (str): L'adresse e-mail exacte du ou des destinataire(s).
@@ -242,3 +248,81 @@ async def generer_briefing_emails(criteres: Optional[str] = None, limite: int = 
         return "Erreur technique : la relève de la totalité des dossiers a échoué. Le serveur IMAP est peut-être injoignable."
     finally:
         await imap_service.disconnect()
+
+
+async def transferer_pj_vers_drive(
+    sujet_mail: str, 
+    expediteur_mail: str, 
+    nom_piece_jointe: str, 
+    id_dossier_drive: str,
+    nouveau_nom: Optional[str] = None,
+    ajouter_prefixe_annee: bool = False
+) -> str:
+    """
+    Télécharge une PJ, la renomme éventuellement, et la sauvegarde dans le Drive.
+    """
+    import os
+    import shutil
+    from datetime import datetime
+    from src.core.dependencies import get_drive_service
+    
+    logger.info(f"Outil 'transferer_pj_vers_drive' appelé pour '{nom_piece_jointe}'. Nouveau nom: {nouveau_nom}, Préfixe: {ajouter_prefixe_annee}")
+    
+    imap_service = get_imap_service()
+    drive_service = get_drive_service()
+    
+    try:
+        # 1. Téléchargement local depuis le serveur académique
+        chemin_fichier_local = await imap_service.download_attachment(
+            sujet=sujet_mail, 
+            expediteur=expediteur_mail, 
+            attachment_name=nom_piece_jointe
+        )
+        
+        if not chemin_fichier_local:
+            return f"Erreur : Impossible de télécharger la pièce jointe '{nom_piece_jointe}'."
+        
+        # 2. Logique de renommage intelligent
+        dossier_parent = os.path.dirname(chemin_fichier_local)
+        nom_actuel = os.path.basename(chemin_fichier_local)
+        nom_base, ext = os.path.splitext(nom_actuel)
+        
+        # Application du nouveau nom s'il est fourni par l'IA
+        nom_final_base = nouveau_nom if nouveau_nom else nom_base
+        
+        # Calcul mathématique et rigoureux du préfixe RXX_
+        if ajouter_prefixe_annee:
+            now = datetime.now()
+            annee = now.year
+            # Si nous sommes avant août (ex: mai 2027), l'année scolaire de rentrée était 2026.
+            if now.month < 8:
+                annee -= 1
+            prefixe = f"R{str(annee)[-2:]}_"
+            nom_final_base = f"{prefixe}{nom_final_base}"
+            
+        nouveau_chemin_local = os.path.join(dossier_parent, f"{nom_final_base}{ext}")
+        
+        # Renommage physique sur le disque du Raspberry Pi (Google Drive prendra ce nouveau nom)
+        os.rename(chemin_fichier_local, nouveau_chemin_local)
+        
+        # 3. Upload depuis le SSD vers Google Drive
+        id_fichier_drive = await drive_service.upload_physical_file(
+            file_path=nouveau_chemin_local, 
+            parent_id=id_dossier_drive
+        )
+        
+        # 4. Nettoyage du Raspberry Pi
+        try:
+            if os.path.exists(dossier_parent):
+                shutil.rmtree(dossier_parent)
+        except Exception as e:
+            logger.warning(f"Impossible de supprimer le dossier temporaire {dossier_parent} : {e}")
+        
+        if id_fichier_drive:
+            return f"Succès : Pièce jointe enregistrée sur le Drive sous le nom '{nom_final_base}{ext}'."
+        else:
+            return "Erreur technique : Le transfert vers Google Drive a échoué."
+            
+    except Exception as e:
+        logger.error(f"Erreur dans l'outil transferer_pj_vers_drive : {e}")
+        return "Erreur technique lors du transfert de la pièce jointe."

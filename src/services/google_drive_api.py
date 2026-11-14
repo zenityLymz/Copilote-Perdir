@@ -403,3 +403,53 @@ class GoogleDriveService:
         except Exception as e:
             logger.error(f"Échec de l'upload de '{filename}' vers Google Drive : {e}")
             raise GoogleAPIError(f"Upload physique échoué : {e}")
+
+
+    async def lister_dossiers_drive(self, parent_id: Optional[str] = None) -> List[Dict[str, str]]:
+        """
+        Liste tous les sous-dossiers contenus dans un dossier parent spécifique.
+        Méthode asynchrone non-bloquante.
+        """
+        async with self._lock:
+            return await asyncio.to_thread(self._lister_dossiers_drive_sync, parent_id)
+
+    def _lister_dossiers_drive_sync(self, parent_id: Optional[str] = None) -> List[Dict[str, str]]:
+        if not self.service:
+            raise GoogleAPIError("Service Drive non authentifié.")
+        
+        # Si aucun parent n'est fourni, on utilise le dossier cible de la configuration
+        if not parent_id:
+            from src.core.config import get_settings
+            parent_id = get_settings().TARGET_DRIVE_FOLDER_ID
+            
+        logger.debug(f"Récupération de l'arborescence des dossiers pour le parent ID : {parent_id}")
+        
+        folders = []
+        page_token = None
+        
+        # Requête ciblée : UNIQUEMENT des dossiers, dans le dossier cible, non supprimés
+        query = f"mimeType = 'application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed = false"
+        
+        try:
+            while True:
+                results = self.service.files().list(
+                    q=query,
+                    pageSize=1000, # Large limite pour minimiser les requêtes réseau
+                    fields="nextPageToken, files(id, name)",
+                    pageToken=page_token
+                ).execute()
+                
+                items = results.get('files', [])
+                for item in items:
+                    folders.append({"id": item['id'], "nom": item['name']})
+                    
+                page_token = results.get('nextPageToken', None)
+                if page_token is None:
+                    break
+                    
+            logger.info(f"{len(folders)} sous-dossier(s) Drive trouvé(s).")
+            return folders
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des dossiers Drive : {e}")
+            raise GoogleAPIError(f"Récupération de l'arborescence échouée : {e}")

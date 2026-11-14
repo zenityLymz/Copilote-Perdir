@@ -666,3 +666,86 @@ class IMAPService:
             import time
             time.sleep(5)
             return False
+
+    async def download_attachment(self, sujet: str, expediteur: str, attachment_name: str) -> Optional[str]:
+        """
+        Télécharge une pièce jointe spécifique d'un e-mail et la sauvegarde sur le SSD local.
+        Méthode asynchrone non-bloquante.
+        """
+        async with self._lock:
+            return await asyncio.to_thread(self._download_attachment_sync, sujet, expediteur, attachment_name)
+
+    def _download_attachment_sync(self, sujet: str, expediteur: str, attachment_name: str) -> Optional[str]:
+        import os
+        import tempfile
+        import email
+        import re
+        from email import policy
+        
+        self._ensure_connected()
+        logger.info(f"Recherche et téléchargement de la PJ '{attachment_name}' pour le mail de {expediteur}...")
+        
+        try:
+            status, folders = self.mail.list()
+            if status != 'OK':
+                raise IMAPError("Impossible de lister les dossiers de la messagerie.")
+                
+            # Nettoyage des chaînes pour éviter de faire planter la requête IMAP SEARCH
+            safe_sujet = sujet.replace('"', '').replace('\\', '').strip()
+            safe_expediteur = expediteur.replace('"', '').replace('\\', '').strip()
+            
+            for folder_data in folders:
+                folder_str = folder_data.decode('utf-8')
+                
+                # On exclut la corbeille pour ne pas récupérer une ancienne version supprimée
+                if "trash" in folder_str.lower() or "corbeille" in folder_str.lower() or "deleted" in folder_str.lower():
+                    continue
+                    
+                match = re.search(r'\"([^\"]+)\"$', folder_str)
+                folder_name = f'"{match.group(1)}"' if match else folder_str.split()[-1]
+                
+                status, _ = self.mail.select(folder_name, readonly=True)
+                if status != 'OK':
+                    continue
+                    
+                # Recherche croisée robuste par Sujet ET Expéditeur
+                search_query = f'SUBJECT "{safe_sujet}" FROM "{safe_expediteur}"'
+                
+                try:
+                    status, messages = self.mail.search(None, search_query.encode('utf-8'))
+                except Exception:
+                    continue # Ignore les erreurs d'encodage sur certains dossiers
+                
+                if status == 'OK' and messages[0]:
+                    mail_ids = messages[0].split()
+                    
+                    for m_id in mail_ids:
+                        status, msg_data = self.mail.fetch(m_id, '(RFC822)')
+                        if status == 'OK':
+                            for response_part in msg_data:
+                                if isinstance(response_part, tuple):
+                                    msg = email.message_from_bytes(response_part[1], policy=policy.default)
+                                    
+                                    if msg.is_multipart():
+                                        for part in msg.walk():
+                                            filename = part.get_filename()
+                                            # Vérification partielle pour pardonner les erreurs de frappe de l'IA
+                                            if filename and attachment_name.lower() in filename.lower():
+                                                payload = part.get_payload(decode=True)
+                                                if payload:
+                                                    # Création d'un dossier temporaire sécurisé sur le SSD
+                                                    temp_dir = tempfile.mkdtemp(prefix="pj_copilote_")
+                                                    file_path = os.path.join(temp_dir, filename)
+                                                    
+                                                    with open(file_path, 'wb') as f:
+                                                        f.write(payload)
+                                                        
+                                                    logger.info(f"Pièce jointe sauvegardée avec succès : {file_path}")
+                                                    return file_path
+
+            logger.warning(f"Impossible de trouver la pièce jointe '{attachment_name}' dans les mails.")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Erreur technique lors de l'extraction de la pièce jointe : {e}", exc_info=True)
+            return None

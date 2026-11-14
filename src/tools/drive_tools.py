@@ -333,3 +333,36 @@ async def generer_brouillon_synthese_hebdo() -> str:
     except Exception as e:
         logger.error(f"Erreur lors de la création du brouillon de synthèse : {e}", exc_info=True)
         return "Erreur technique lors de la création du brouillon de synthèse."
+
+async def lister_dossiers_racine_drive() -> str:
+    """
+    Récupère la liste exacte de tous les dossiers présents à la racine du Drive du collège.
+    
+    ATTENTION POUR LE COPILOTE : Utilise cet outil AVANT de transférer une pièce jointe vers le Drive. 
+    Cela te permettra d'analyser les noms des dossiers disponibles et de choisir l'identifiant (ID_DOSSIER) 
+    exact qui correspond sémantiquement à la demande du chef d'établissement.
+    
+    Returns:
+        str: Une liste formatée contenant le nom et l'ID technique de chaque dossier.
+    """
+    logger.info("Outil 'lister_dossiers_racine_drive' appelé.")
+    
+    try:
+        from src.core.dependencies import get_drive_service
+        drive_service = get_drive_service()
+        
+        dossiers = await drive_service.lister_dossiers_drive()
+        
+        if not dossiers:
+            return "Le dossier racine du Drive est vide ou inaccessible."
+            
+        resultat = "Voici les dossiers disponibles à la racine du Drive (et leur ID) :\n\n"
+        for d in dossiers:
+            resultat += f"- Nom : '{d['nom']}' | ID_DOSSIER : {d['id']}\n"
+            
+        resultat += "\nCopilote : Utilise l'ID_DOSSIER le plus pertinent pour tes prochains transferts."
+        return resultat
+        
+    except Exception as e:
+        logger.error(f"Erreur dans l'outil lister_dossiers_racine_drive : {e}")
+        return "Erreur technique : impossible de lister les dossiers du Drive."
