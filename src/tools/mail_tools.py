@@ -134,34 +134,57 @@ async def rechercher_dans_les_emails(
         logger.error(f"Échec de la recherche vectorielle dans les e-mails : {e}", exc_info=True)
         return "Erreur technique : impossible d'accéder à la base de données des e-mails pour le moment."
 
-async def enregistrer_brouillon_mail(destinataire: str, sujet: str, corps_message: str) -> bool:
+async def enregistrer_brouillon_mail(destinataire: str, sujet: str, contexte_original: str, directives_de_redaction: str) -> str:
     """
-    Outil agissant comme un "bras robotique" pour injecter un e-mail dans le dossier 
-    "Brouillons" (Drafts) de la messagerie académique du chef d'établissement.
+    Outil pour préparer et injecter un e-mail dans le dossier "Brouillons" de la messagerie.
     
-    ATTENTION POUR LE COPILOTE : Tu dois D'ABORD rédiger toi-même la réponse 
-    complète avant d'appeler cet outil.
+    ATTENTION POUR LE COPILOTE : Tu ne dois pas rédiger toi-même la réponse complète.
+    Fournis les éléments factuels (le contexte) et tes directives, un agent spécialisé 
+    se chargera de la rédaction finale dans le style de l'utilisateur.
+    Tu dois d'abord t'assurer d'avoir bien compris le contexte (qui est le destinataire (est-ce un prof, un aed, un parent, un inspecteur, etc.), quel est le sujet, quel est le contexte de l'échange, etc.) avant de transmettre la requête à l'agent spécialisé.
+    Dis-toi bien que l'agent spécialisé n'a pas connaissance du contexte de l'établissement donc il faut que tu lui donnes tout ce qui est nécessaire à sa tâche.
+    Affiche ENSUITE fidèlement le contenu exact qui t'est retourné par cet outil (pas de texte supplémentaire, et pas de signature par exemple, car celle-ci sera ajoutée automatiquement plus tard lors de l'envoi manuel). Ne modifie jamais le texte généré par l'agent spécialisé, même si tu penses qu'il pourrait être amélioré.
+    La seule chose que tu dois faire, c'est de juger si le texte fourni te semble conforme à ce que j'attends. Pour ce faire, à la fin de la réponse que tu m'envoies sur Telegram, après la citation exacte du mail généré, tu dois ajouter : "Validation orchestrateur : conforme" ou alors "Validation orchestrateur : non conforme (il manque une information concernant [...] ou bien le style n'est pas respecté, etc.)".
 
     Args:
         destinataire (str): L'adresse e-mail exacte du ou des destinataire(s).
         sujet (str): L'objet synthétique de l'e-mail.
-        corps_message (str): Le contenu complet du message.
+        contexte_original (str): Le résumé ou texte brut du mail auquel on répond (laisse vide si c'est un nouveau mail spontané).
+        directives_de_redaction (str): Tes consignes (ex: "Refuser poliment car la jauge de la salle est atteinte").
 
     Returns:
-        bool: True si le brouillon a été synchronisé sur le serveur avec succès, False sinon.
+        str: Le message de succès contenant le texte exact généré, ou un message d'erreur.
     """
     
-    logger.info(f"Outil 'enregistrer_brouillon_mail' appelé pour le ou les destinataire(s) : {destinataire}")
-    
-    # Récupération de l'instance IMAP déjà connectée depuis le registre
+    logger.info(f"Outil 'enregistrer_brouillon_mail' appelé pour : {destinataire}")
+    logger.info(f"-> Contexte transmis : {contexte_original}")
+    logger.info(f"-> Directives de rédaction : {directives_de_redaction}")
     imap_service = get_imap_service()
     
     try:
+        # 1. On fait appel au nouvel agent spécialisé pour rédiger le texte
+        from src.agents.draft_agent import DraftAgent
+        draft_agent = DraftAgent()
+        
+        corps_message = await draft_agent.generate_draft(
+            destinataire=destinataire,
+            sujet=sujet,
+            contexte_original=contexte_original,
+            directives_de_redaction=directives_de_redaction
+        )
+        
+        # 2. Sauvegarde du brouillon sur le serveur IMAP
         succes = await imap_service.save_draft(destinataire, sujet, corps_message, dossier_brouillons='"Drafts"')
-        return succes
+        
+        if succes:
+            # On renvoie le texte exact à l'Orchestrateur pour qu'il le restitue fidèlement
+            return f"Le brouillon a été enregistré avec succès. Voici le texte exact qui a été généré :\n\n{corps_message}"
+        else:
+            return "Erreur technique : impossible d'enregistrer le brouillon sur le serveur."
+        
     except Exception as e:
         logger.error(f"Échec de l'exécution de l'outil enregistrer_brouillon_mail : {e}")
-        return False
+        return f"Erreur de l'agent de rédaction : {e}"
 
 async def generer_briefing_emails(criteres: Optional[str] = None, limite: int = 50) -> str:
     """
