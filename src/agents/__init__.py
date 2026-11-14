@@ -11,3 +11,4 @@ from .synth_agent import SynthAgent
 from .orchestrator_agent import OrchestratorAgent
 from .briefing_agent import BriefingAgent
 from .main_courante_agent import MainCouranteAgent
+from .draft_agent import DraftAgent
