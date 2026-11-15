@@ -10,6 +10,7 @@ class DossierCible(str, Enum):
     A_TRAITER = "A traiter"
     NON_URGENT = "Non urgent"
     LECTURE = "Lecture"
+    CEPAGES = "Cepages"
     TRASH = "Trash"
 
 
