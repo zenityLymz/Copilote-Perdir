@@ -732,7 +732,7 @@ class IMAPService:
                                             if msg.is_multipart():
                                                 for part in msg.walk():
                                                     filename = part.get_filename()
-                                                    if filename and clean_str(attachment_name) in clean_str(filename):
+                                                    if filename and clean_str(attachment_name) == clean_str(filename):
                                                         payload = part.get_payload(decode=True)
                                                         if payload:
                                                             temp_dir = tempfile.mkdtemp(prefix="pj_copilote_")
