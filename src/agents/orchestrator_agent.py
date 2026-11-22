@@ -177,7 +177,8 @@ class OrchestratorAgent:
                     tools=self._get_available_tools(),
                     temperature=0.4,
                 ),
-                action_context="Orchestrateur_Agentic_Loop"
+                action_context="Orchestrateur_Agentic_Loop",
+                force_paid=True
             )
 
             if not response.text:

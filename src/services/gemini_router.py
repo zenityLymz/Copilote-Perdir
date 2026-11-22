@@ -44,52 +44,48 @@ class GeminiRouterService:
         model_tier: str, 
         contents: Any, 
         config: types.GenerateContentConfig,
-        action_context: str = "Inconnu"
+        action_context: str = "Inconnu",
+        force_paid: bool = False
     ) -> Any:
         """
         Exécute un prompt avec gestion du routage (Pro/Flash/Lite) et du Fallback (Gratuit/Payant).
         """
-        # 1. Sélection du modèle exact selon la demande
-        if model_tier.lower() == "pro":
+        tier_name = model_tier.lower()
+
+        if tier_name == "pro":
             target_model = self.pro_model
-        elif model_tier.lower() == "flash-lite":
+        elif tier_name == "flash-lite":
             target_model = self.flash_lite_model
         else:
             target_model = self.flash_model
 
-        # 2. Mécanique de facturation et de Fallback
-        if model_tier.lower() == "pro":
-            logger.debug(f"[{action_context}] Routage vers {target_model} (Payant forcé).")
+        if tier_name == "pro" or force_paid:
+            logger.debug(f"[{action_context}] Routage direct vers {target_model} (Payant forcé).")
             response = await self.client_paid.aio.models.generate_content(
                 model=target_model, contents=contents, config=config
             )
-            await self._log_tokens(response, "pro_payant", action_context)
+            await self._log_tokens(response, f"{tier_name}_payant", action_context)
             return response
-            
-        else:
-            # Pour "flash" et "flash-lite", on tente d'abord le gratuit
-            tier_name = model_tier.lower() 
-            try:
-                logger.debug(f"[{action_context}] Routage vers {target_model} (Gratuit)...")
-                response = await self.client_free.aio.models.generate_content(
+
+        try:
+            logger.debug(f"[{action_context}] Routage vers {target_model} (Gratuit)...")
+            response = await self.client_free.aio.models.generate_content(
+                model=target_model, contents=contents, config=config
+            )
+            await self._log_tokens(response, f"{tier_name}_gratuit", action_context)
+            return response
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(kw in error_msg for kw in ["429", "quota", "503", "500", "overloaded", "high demand"]):
+                logger.warning(f"[{action_context}] API Gratuite saturée ou quota dépassé. BASCULE sur {target_model} (Payant).")
+                response = await self.client_paid.aio.models.generate_content(
                     model=target_model, contents=contents, config=config
                 )
-                await self._log_tokens(response, f"{tier_name}_gratuit", action_context)
+                await self._log_tokens(response, f"{tier_name}_payant", action_context)
                 return response
-                
-            except Exception as e:
-                error_msg = str(e).lower()
-                # On attrape les quotas (429) ET les surcharges serveurs Google (503, 500)
-                if any(kw in error_msg for kw in ["429", "quota", "503", "500", "overloaded", "high demand"]):
-                    logger.warning(f"[{action_context}] API Gratuite saturée ou quota dépassé. BASCULE sur {target_model} (Payant).")
-                    
-                    response = await self.client_paid.aio.models.generate_content(
-                        model=target_model, contents=contents, config=config
-                    )
-                    await self._log_tokens(response, f"{tier_name}_payant", action_context)
-                    return response
-                else:
-                    raise AgentError(f"Erreur API Gemini : {e}")
+            else:
+                raise AgentError(f"Erreur API Gemini : {e}")
 
     async def send_chat_message(
         self,
@@ -97,40 +93,48 @@ class GeminiRouterService:
         history: List[types.Content],
         user_message: str,
         config: types.GenerateContentConfig,
-        action_context: str = "Orchestrateur"
+        action_context: str = "Orchestrateur",
+        force_paid: bool = False
     ) -> Any:
         """
         Spécifique pour l'Orchestrateur (Pipeline B) qui utilise une session de Chat 
         pour maintenir le contexte et utiliser le Function Calling (Outils).
         """
-        # Résolution du modèle selon le paramètre
-        if model_tier.lower() == "pro":
+        tier_name = model_tier.lower()
+
+        if tier_name == "pro":
             target_model = self.pro_model
-        elif model_tier.lower() == "flash-lite":
+        elif tier_name == "flash-lite":
             target_model = self.flash_lite_model
         else:
             target_model = self.flash_model
 
+        if tier_name == "pro" or force_paid:
+            logger.debug(f"[{action_context}] Routage direct Chat vers {target_model} (Payant forcé).")
+            chat_paid = self.client_paid.aio.chats.create(
+                model=target_model, history=history, config=config
+            )
+            response = await chat_paid.send_message(user_message)
+            await self._log_tokens(response, f"{tier_name}_payant", action_context)
+            return response
+
         try:
-            # On tente d'abord en gratuit avec le modèle ciblé
             chat_free = self.client_free.aio.chats.create(
                 model=target_model, history=history, config=config
             )
             response = await chat_free.send_message(user_message)
-            await self._log_tokens(response, f"{model_tier.lower()}_gratuit", action_context)
+            await self._log_tokens(response, f"{tier_name}_gratuit", action_context)
             return response
-            
+
         except Exception as e:
             error_msg = str(e).lower()
             if any(kw in error_msg for kw in ["429", "quota", "503", "500", "overloaded", "high demand"]):
                 logger.warning(f"[{action_context}] API Gratuite saturée (Chat). BASCULE sur compte Payant.")
-                
-                # On recrée la session de chat avec le client payant
                 chat_paid = self.client_paid.aio.chats.create(
                     model=target_model, history=history, config=config
                 )
                 response = await chat_paid.send_message(user_message)
-                await self._log_tokens(response, f"{model_tier.lower()}_payant", action_context)
+                await self._log_tokens(response, f"{tier_name}_payant", action_context)
                 return response
             else:
                 raise AgentError(f"Erreur API Gemini (Chat) : {e}")

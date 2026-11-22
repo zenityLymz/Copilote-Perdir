@@ -162,7 +162,8 @@ class PipelineBTelegram:
             config=types.GenerateContentConfig(
                 temperature=0.0 # Température à 0 pour éviter la moindre hallucination
             ),
-            action_context="Transcription_Audio_Telegram"
+            action_context="Transcription_Audio_Telegram",
+            force_paid=True
         )
         
         return response.text.strip()

@@ -68,7 +68,8 @@ class MainCouranteAgent:
                     # Toujours une température très basse pour garantir le ton "Secrétariat de Direction"
                     temperature=0.1,
                 ),
-                action_context="MainCourante_Texte"
+                action_context="MainCourante_Texte",
+                force_paid=True
             )
 
             if not response.text:

@@ -60,7 +60,8 @@ class BriefingAgent:
                     # Température basse (0.2) : On veut de la précision factuelle, pas de l'invention littéraire
                     temperature=0.2, 
                 ),
-                action_context="Briefing_Emails"
+                action_context="Briefing_Emails",
+                force_paid=True
             )
 
             if not response.text:

@@ -40,7 +40,8 @@ class DraftAgent:
                     # Température basse (0.2) pour éviter que l'IA ne dérive du style imposé
                     temperature=0.2, 
                 ),
-                action_context="Redaction_Brouillon_Email"
+                action_context="Redaction_Brouillon_Email",
+                force_paid=True
             )
 
             if not response.text:
