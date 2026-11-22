@@ -59,6 +59,8 @@ def setup_logger(log_file_path: Optional[Path] = None, log_level: int = logging.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.WARNING)
+    logging.getLogger("google_genai.models").setLevel(logging.WARNING)
+
 
 def get_logger(module_name: str) -> logging.Logger:
     """

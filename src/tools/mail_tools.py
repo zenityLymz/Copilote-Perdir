@@ -134,7 +134,7 @@ async def rechercher_dans_les_emails(
             contexte_formate += f"Extrait du contenu : {texte_tronque}\n"
             contexte_formate += "-" * 20 + "\n\n"
             
-        logger.info(f"-> Contexte brut remonté à l'Orchestrateur :\n{contexte_formate}")    
+        logger.debug(f"-> Contexte brut remonté à l'Orchestrateur :\n{contexte_formate}")    
         return contexte_formate
         
     except Exception as e:
@@ -164,8 +164,6 @@ async def enregistrer_brouillon_mail(destinataire: str, sujet: str, contexte_ori
     """
     
     logger.info(f"Outil 'enregistrer_brouillon_mail' appelé pour : {destinataire}")
-    logger.info(f"-> Contexte transmis : {contexte_original}")
-    logger.info(f"-> Directives de rédaction : {directives_de_redaction}")
     imap_service = get_imap_service()
     
     try:
