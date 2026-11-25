@@ -16,3 +16,8 @@
 - **Un seul fichier modifié à la fois.**
 - **Jamais de génération ou de modification en masse.**
 - **Attendre la validation explicite de l'utilisateur** après chaque modification avant de passer à l'étape ou au fichier suivant.
+
+## 4. Protocole de test local
+- **Interdiction absolue de lancer `main.py`** : une instance de production tourne 24/7 sur Raspberry Pi avec le même token Telegram et la même boîte IMAP.
+- **Validation ciblée dans `.venv`** : valider chaque modification via un script de test ciblé exécuté dans l'environnement virtuel local (`.venv`).
+- **Boucle autonome et nettoyage** : itérer de façon autonome (`erreur → correction → relance`) jusqu'à réussite complète, puis nettoyer toutes les données et scripts temporaires de test.
