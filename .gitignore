@@ -2,7 +2,9 @@
 .venv/
 
 credentials.json
+credentials_mcp.json
 token.json
+token_mcp.json
 
 __pycache__/
 *.pyc
@@ -16,3 +18,4 @@ code_complet_pour_ia.txt
 code_complet_pour_ia_avant_modif_14_nov_2026.txt
 export_mails_hugo.txt
 extract_sent.py
+test_mcp_discovery.py
